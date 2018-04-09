@@ -18,13 +18,13 @@ type Delta struct {
 	Size      float32
 }
 
-// OrderbookSnapshot : Here we store the orderbook data before we serialize it and
+// Snapshot : Here we store the orderbook data before we serialize it and
 // send it to the ZMQ socket and Redis.
-type OrderbookSnapshot struct {
+type Snapshot struct {
 	Timestamp uint32
 	StartSeq  uint64
-	AskSide   []interface{}
-	BidSide   []interface{}
+	AskSide   interface{}
+	BidSide   interface{}
 }
 
 // IOrderbookSnapshot : We must capture a snapshot of the orderbook

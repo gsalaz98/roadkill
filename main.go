@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -10,6 +9,7 @@ import (
 	"gitlab.com/CuteQ/roadkill/orderbook"
 
 	"github.com/gorilla/websocket"
+	_ "github.com/pebbe/zmq4"
 )
 
 func main() {
@@ -60,10 +60,15 @@ func main() {
 
 			switch tickData[0] {
 			case "o": // Orderbook updates
+				// Poloniex update format:
+				//	[<MARKET_ID>, <MARKET_TICK>, [
+				//		[<TICK_TYPE>, <BOOK_SIDE>, <PRICE>, <NEW_PRICE>],
+				//		...
+				//	]]
 				price, err = strconv.ParseFloat(tickData[2].(string), 32)
 				size, err = strconv.ParseFloat(tickData[3].(string), 32)
 
-				switch tickData[1] {
+				switch tickData[1] { // Book side
 				case 0: // Ask
 					eventType = orderbook.IsUpdate | orderbook.IsAsk
 				case 1: // Bid
@@ -74,7 +79,7 @@ func main() {
 				price, err = strconv.ParseFloat(tickData[3].(string), 32)
 				size, err = strconv.ParseFloat(tickData[4].(string), 32)
 
-				switch tickData[2] {
+				switch tickData[2] { // Book side
 				case 0: // Ask
 					eventType = orderbook.IsTrade | orderbook.IsAsk
 				case 1: // Bid
@@ -82,6 +87,23 @@ func main() {
 				}
 
 			case "i": // Base orderbook event
+				// The Poloniex orderbook tick is formatted as follows:
+				//	[<MARKET_ID>, <MARKET_TICK>, {
+				//		currencyPair: <MARKET>_<ASSET>,
+				//		orderBook: [
+				//			<ASK>{<ASK_PRICE>: <AMOUNT_ASSET>, ...},
+				//			<BID>{<BID_PRICE>: <AMOUNT_ASSET>, ...}
+				//		]
+				//	}]
+
+				// snapshotTick converts the orderbook data into a parsable format
+				snapshotTick := tickData[1].(map[string]interface{})["orderBook"].([]interface{})
+				snapshot := orderbook.Snapshot{
+					Timestamp: uint32(time.Now().UnixNano() / 1000),
+					StartSeq:  0,
+					AskSide:   snapshotTick[0],
+					BidSide:   snapshotTick[1],
+				}
 				break dataIter
 			}
 
@@ -95,7 +117,5 @@ func main() {
 		}
 		en := time.Now().Sub(st)
 		fmt.Println("Time elapsed: ", en)
-
-		encoding.BinaryMarshaler
 	}
 }
