@@ -1,25 +1,22 @@
 package main
 
 import (
-	"net/http"
-
 	"gitlab.com/CuteQ/roadkill/exchanges"
+	"gitlab.com/CuteQ/roadkill/orderbook"
 )
 
 func main() {
-	var (
-		header   http.Header
-		messages []map[string]string
-	)
-	messages = append(messages, map[string]string{
-		"command": "subscribe",
-		"channel": "BTC_ETH",
-	})
-	messages = append(messages, map[string]string{
-		"command": "subscribe",
-		"channel": "BTC_XMR",
-	})
-	poloConnection := poloniex.CreateConnection(header)
-	poloniex.SendMessage(poloConnection, messages)
-	poloniex.ReceiveMessageLoop(poloConnection)
+	receiver := make(chan orderbook.Delta)
+
+	polo := poloniex.DefaultSettings
+	polo2 := poloniex.DefaultSettings
+
+	polo.Initialize("BTC_ETH", "BTC_XMR")
+	polo2.Initialize("USDT_BTC", "BTC_XRP")
+	go polo.ReceiveMessageLoop(receiver)
+	go polo2.ReceiveMessageLoop(receiver)
+
+	for {
+		//<-receiver
+	}
 }

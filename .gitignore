@@ -1,2 +1,6 @@
+# Binary file formats
 *.exe
 *.swp
+
+# VSCode Project Folder Settings
+.vscode/

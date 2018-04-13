@@ -1,7 +1,6 @@
 package poloniex
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -13,12 +12,79 @@ import (
 	"gitlab.com/CuteQ/roadkill/orderbook"
 )
 
-// AssetTable : enum with various helper parameters useful for identifying the market-asset pair
-var AssetTable = make(map[float64]string)
+// Settings : Structure is used to load settings into the application.
+type Settings struct {
+	connURL    string
+	headers    http.Header
+	messages   []map[string]string
+	conn       *websocket.Conn
+	assetTable map[float64]string
+}
 
-func init() {
+// DefaultSettings : Setup a simple skeleton of the Settings struct for ease of use
+var DefaultSettings = Settings{
+	connURL:    "wss://api2.poloniex.com",
+	headers:    http.Header{},
+	assetTable: make(map[float64]string),
+}
+
+// CreateConnection : Creates a websocket connection and returns the connection object
+func (s *Settings) CreateConnection() {
+	var c websocket.Dialer
+	conn, _, err := c.Dial(s.connURL, s.headers)
+
+	if err != nil {
+		fmt.Println("Error in connection: ", err)
+	}
+	s.conn = conn
+}
+
+// SendMessages : Sends multiple messages to the client
+func (s *Settings) SendMessages(messages []map[string]string) {
+	for _, message := range messages {
+		s.conn.WriteJSON(message)
+	}
+}
+
+// SubscribeWizard : Creates the subscription messages and stores it in the
+// Settings struct based off a list of assets passed as variadic string parameters
+func (s *Settings) SubscribeWizard(symbols ...string) {
+	s.messages = make([]map[string]string, len(symbols))
+	for _, asset := range symbols {
+		s.messages = append(s.messages, map[string]string{
+			"command": "subscribe",
+			"channel": asset,
+		})
+	}
+	s.SendMessages(s.messages)
+}
+
+// UnsubscribeWizard : Accepts variadic paramters allowing you to unsubscribe from multiple assets at the same time
+func (s *Settings) UnsubscribeWizard(symbols ...string) {
+	s.messages = make([]map[string]string, len(symbols))
+	for _, asset := range symbols {
+		s.messages = append(s.messages, map[string]string{
+			"command": "unsubscribe",
+			"channel": asset,
+		})
+	}
+	s.SendMessages(s.messages)
+}
+
+// Unsubscribe : Stops receiving data for the asset `symbol`
+func (s *Settings) Unsubscribe(symbol string) {
+	unsubMsg := map[string]string{
+		"command": "unsubscribe",
+		"channel": symbol,
+	}
+	s.conn.WriteJSON(unsubMsg)
+}
+
+// getAssetCodes : Retrieves integer representations of symbols on the exchange.
+func (s *Settings) getAssetCodes() {
 	var jsonData interface{}
 
+	// HTTP Responses may be prone to failure. Make sure to error handle here.
 	resp, err := http.Get("https://poloniex.com/public?command=returnTicker")
 	if err != nil {
 		panic(err)
@@ -31,50 +97,40 @@ func init() {
 
 	for assetPair, data := range jsonData.(map[string]interface{}) {
 		assetID := data.(map[string]interface{})["id"].(float64)
-		AssetTable[assetID] = assetPair
+		s.assetTable[assetID] = assetPair
 	}
 }
 
-// CreateConnection : Creates a websocket connection and returns the connection object
-func CreateConnection(headers http.Header) *websocket.Conn {
-	const ConnURL string = "wss://api2.poloniex.com"
-	var c websocket.Dialer
-
-	conn, _, err := c.Dial(ConnURL, headers)
-
-	if err != nil {
-		fmt.Println("Error in connection: ", err)
-	}
-
-	return conn
-}
-
-// SendMessage : Sends a websocket message to the socket object `c`.
-func SendMessage(c *websocket.Conn, messages []map[string]string) {
-	for _, message := range messages {
-		c.WriteJSON(message)
-	}
+// Initialize : Initializes the entire structure automatically and calls methods required to run perfectly.
+// Requires symbols you want to subscribe to to be passed as variadic parameters for the `Settings.SubscribeWizard` method.
+// Stops short of calling the ReceiveMessageLoop method.
+func (s *Settings) Initialize(symbols ...string) {
+	s.getAssetCodes()
+	s.CreateConnection()
+	s.SubscribeWizard(symbols...)
 }
 
 // ReceiveMessageLoop : This runs infinitely until the connection is closed by the server.
-// For concurrent use only.
-func ReceiveMessageLoop(c *websocket.Conn) {
+// It is recommended that you call this method concurrently.
+func (s *Settings) ReceiveMessageLoop(output chan orderbook.Delta) {
 	// TODO: Get poloniex current tick count by asking the database itself
 	var tickMessage orderbook.ITickMessage
 
 	for {
-		c.ReadJSON(&tickMessage)
+		// TODO: Consider replacing this method with a `conn.ReadMessage(&tickMessage)` call instead.
+		// Might yield better performance in the longer run if we handle all errors and the data ourselves.
+		s.conn.ReadJSON(&tickMessage)
 		msgLength := len(tickMessage)
 
 		if msgLength < 3 {
 			continue
 		}
 
+		blockTimestamp := uint64(time.Now().UnixNano())
 		msgData := tickMessage[2].([]interface{})
 		dataLength := len(msgData)
 		deltas := make([]orderbook.Delta, dataLength, dataLength)
 
-		st := time.Now()
 	dataIter: // Define a block to escape the orderbook parsing logic
 		for i := 0; i < dataLength; i++ {
 			var (
@@ -127,7 +183,7 @@ func ReceiveMessageLoop(c *websocket.Conn) {
 				// snapshotTick converts the orderbook data into a parsable format
 				snapshotTick := tickData[1].(map[string]interface{})["orderBook"].([]interface{})
 				snapshot := orderbook.Snapshot{
-					Timestamp: uint32(time.Now().UnixNano() / 1000),
+					Timestamp: blockTimestamp,
 					StartSeq:  0,
 					AskSide:   snapshotTick[0],
 					BidSide:   snapshotTick[1],
@@ -137,28 +193,13 @@ func ReceiveMessageLoop(c *websocket.Conn) {
 			}
 
 			deltas[i] = orderbook.Delta{
-				Timestamp: uint64(time.Now().UnixNano() / 1000),
-				Tick:      0,
+				Timestamp: blockTimestamp,
 				Event:     eventType,
-				Price:     float32(price),
-				Size:      float32(size),
+				Price:     price,
+				Size:      size,
 			}
-			//fmt.Println(pairCode, AssetTable[pairCode], deltas[i])
+			fmt.Println(deltas[i])
+			output <- deltas[i]
 		}
-		en := time.Now().Sub(st)
-		fmt.Println("Time elapsed: ", en)
 	}
-}
-
-// NormalizedMarketName : Using standard market and asset
-// names, returns an exchange specific asset pair.
-// TODO: Work on making a database lookup table
-func NormalizedMarketName(market, asset string) string {
-	var marketBuffer bytes.Buffer
-
-	marketBuffer.WriteString(market)
-	marketBuffer.WriteString("_")
-	marketBuffer.WriteString(asset)
-
-	return marketBuffer.String()
 }
