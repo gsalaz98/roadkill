@@ -3,15 +3,18 @@ package orderbook
 // Orderbook event types. This is used to encode two boolean values
 // into one byte of data instead of two. This saves lots of space in the long run.
 const (
-	IsBidTrade  uint8 = 0
-	IsBidUpdate uint8 = 1
-	IsBidRemove uint8 = 2 // For support on exchanges that transmit a remove event
+	IsBidTrade       uint8 = 0
+	IsBidUpdate      uint8 = 1
+	IsBidRemove      uint8 = 2 // For support on exchanges that transmit a remove event
+	IsBidTradeRemove uint8 = 11
 
-	IsAskTrade  uint8 = 3
-	IsAskUpdate uint8 = 4
-	IsAskRemove uint8 = 5 // For support on exchanges that transmit a remove event
+	IsAskTrade       uint8 = 3
+	IsAskUpdate      uint8 = 4
+	IsAskRemove      uint8 = 5 // For support on exchanges that transmit a remove event
+	IsAskTradeRemove uint8 = 10
 
 	// In case we decide to use this instead
+	IsBid    uint8 = 1 << 0
 	IsAsk    uint8 = 1 << 1
 	IsTrade  uint8 = 1 << 2
 	IsUpdate uint8 = 1 << 3

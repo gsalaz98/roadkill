@@ -1,7 +1,7 @@
 package main
 
 import (
-	"gitlab.com/CuteQ/roadkill/exchanges"
+	"gitlab.com/CuteQ/roadkill/exchanges/poloniex"
 	"gitlab.com/CuteQ/roadkill/orderbook"
 )
 
@@ -13,8 +13,7 @@ func main() {
 
 	polo.Initialize("BTC_ETH", "BTC_XMR")
 	polo2.Initialize("USDT_BTC", "BTC_XRP")
-	go polo.ReceiveMessageLoop(receiver)
-	go polo2.ReceiveMessageLoop(receiver)
+	polo.ReceiveMessageLoop(receiver)
 
 	for {
 		//<-receiver

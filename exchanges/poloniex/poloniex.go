@@ -12,6 +12,9 @@ import (
 	"gitlab.com/CuteQ/roadkill/orderbook"
 )
 
+// ExchangeName : Exchange name as an exportable constant
+const ExchangeName string = "poloniex"
+
 // Settings : Structure is used to load settings into the application.
 type Settings struct {
 	connURL    string
@@ -114,55 +117,68 @@ func (s *Settings) Initialize(symbols ...string) {
 // It is recommended that you call this method concurrently.
 func (s *Settings) ReceiveMessageLoop(output chan orderbook.Delta) {
 	// TODO: Get poloniex current tick count by asking the database itself
-	var tickMessage orderbook.ITickMessage
-
+	var (
+		tickMessage orderbook.ITickMessage
+		seqCount    uint64
+	)
 	for {
 		// TODO: Consider replacing this method with a `conn.ReadMessage(&tickMessage)` call instead.
 		// Might yield better performance in the longer run if we handle all errors and the data ourselves.
 		s.conn.ReadJSON(&tickMessage)
-		msgLength := len(tickMessage)
 
-		if msgLength < 3 {
+		if len(tickMessage) < 3 {
 			continue
 		}
 
 		blockTimestamp := uint64(time.Now().UnixNano())
 		msgData := tickMessage[2].([]interface{})
-		dataLength := len(msgData)
-		deltas := make([]orderbook.Delta, dataLength, dataLength)
+		dataLen := len(msgData)
+		deltas := make([]orderbook.Delta, dataLen)
 
 	dataIter: // Define a block to escape the orderbook parsing logic
-		for i := 0; i < dataLength; i++ {
+		for i := 0; i < dataLen; i++ {
+			seqCount++ // Update the sequence count
+
 			var (
-				_         = tickMessage[0].(float64)
 				eventType uint8
 				price     float64
 				size      float64
+				startTime = time.Now()
 			)
 
-			tickData := msgData[i].([]interface{})
-
-			switch tickData[0] {
+			switch tickData := msgData[i].([]interface{}); tickData[0] {
 			case "o": // Orderbook updates
 				// Poloniex update format:
 				//	[<MARKET_ID>, <MARKET_TICK>, [
 				//		[<TICK_TYPE>, <BOOK_SIDE>, <PRICE>, <NEW_PRICE>],
 				//		...
 				//	]]
-				price, _ = strconv.ParseFloat(tickData[2].(string), 32)
-				size, _ = strconv.ParseFloat(tickData[3].(string), 32)
+				price, _ = strconv.ParseFloat(tickData[2].(string), 64)
+				size, _ = strconv.ParseFloat(tickData[3].(string), 64)
 
 				switch tickData[1] { // Book side
 				case 0: // Ask
-					eventType = orderbook.IsUpdate | orderbook.IsAsk
+					switch size {
+					case 0.00: // Poloniex removes orderbook entries by submitting a zero for their size
+						eventType = orderbook.IsAskRemove
+					default:
+						eventType = orderbook.IsAskUpdate
+					}
 				case 1: // Bid
-					eventType = orderbook.IsUpdate | orderbook.IsBid
+					switch size {
+					case 0.00: // Poloniex removes orderbook entries by submitting a zero for their size
+						eventType = orderbook.IsBidRemove
+
+					default:
+						eventType = orderbook.IsBidUpdate
+					}
 				}
 
 			case "t": // Trade event
-				price, _ = strconv.ParseFloat(tickData[3].(string), 32)
-				size, _ = strconv.ParseFloat(tickData[4].(string), 32)
+				price, _ = strconv.ParseFloat(tickData[3].(string), 64)
+				size, _ = strconv.ParseFloat(tickData[4].(string), 64)
 
+				// TODO: We need to check if the trade results in a deleted orderbook entry
 				switch tickData[2] { // Book side
 				case 0: // Ask
 					eventType = orderbook.IsTrade | orderbook.IsAsk
@@ -184,22 +200,24 @@ func (s *Settings) ReceiveMessageLoop(output chan orderbook.Delta) {
 				snapshotTick := tickData[1].(map[string]interface{})["orderBook"].([]interface{})
 				snapshot := orderbook.Snapshot{
 					Timestamp: blockTimestamp,
-					StartSeq:  0,
+					StartSeq:  1,
 					AskSide:   snapshotTick[0],
 					BidSide:   snapshotTick[1],
 				}
-				fmt.Println(snapshot)
 				continue dataIter
 			}
 
 			deltas[i] = orderbook.Delta{
-				Timestamp: blockTimestamp,
+				TimeDelta: blockTimestamp,
+				Seq:       seqCount,
 				Event:     eventType,
 				Price:     price,
 				Size:      size,
 			}
-			fmt.Println(deltas[i])
-			output <- deltas[i]
+			end := time.Now().Sub(startTime)
+			//fmt.Println(deltas[i])
+			//output <- deltas[i]
+			fmt.Println(end)
 		}
 	}
 }
