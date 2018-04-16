@@ -6,16 +6,11 @@ import (
 )
 
 func main() {
-	receiver := make(chan orderbook.Delta)
-
+	var receiver = make(chan orderbook.Delta)
 	polo := poloniex.DefaultSettings
-	polo2 := poloniex.DefaultSettings
-
-	polo.Initialize("BTC_ETH", "BTC_XMR")
-	polo2.Initialize("USDT_BTC", "BTC_XRP")
+	polo.Initialize("BTC_ETH", "BTC_XMR", "BTC_XRP", "BTC_LTC", "BTC_STR")
 	polo.ReceiveMessageLoop(receiver)
 
-	for {
-		//<-receiver
-	}
+	//bitm := bitmex.DefaultSettings
+	//bitm.Initialize("XBTUSD", "ETHM18")
 }

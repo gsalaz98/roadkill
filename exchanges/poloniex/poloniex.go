@@ -1,14 +1,16 @@
 package poloniex
 
 import (
-	"encoding/json"
+	"bytes"
+	"encoding/binary"
 	"fmt"
 	"io/ioutil"
+	"math"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/pquerna/ffjson/ffjson"
 	"gitlab.com/CuteQ/roadkill/orderbook"
 )
 
@@ -60,6 +62,12 @@ func (s *Settings) SubscribeWizard(symbols ...string) {
 		})
 	}
 	s.SendMessages(s.messages)
+	s.parseOrderbookSnapshots(symbols...)
+}
+
+// Subscribe : Sends a subscribe message to the server. We let the SubscribeWizard take care of that for us
+func (s *Settings) Subscribe(symbol string) {
+	s.SubscribeWizard([]string{symbol}...)
 }
 
 // UnsubscribeWizard : Accepts variadic paramters allowing you to unsubscribe from multiple assets at the same time
@@ -76,11 +84,7 @@ func (s *Settings) UnsubscribeWizard(symbols ...string) {
 
 // Unsubscribe : Stops receiving data for the asset `symbol`
 func (s *Settings) Unsubscribe(symbol string) {
-	unsubMsg := map[string]string{
-		"command": "unsubscribe",
-		"channel": symbol,
-	}
-	s.conn.WriteJSON(unsubMsg)
+	s.UnsubscribeWizard([]string{symbol}...)
 }
 
 // getAssetCodes : Retrieves integer representations of symbols on the exchange.
@@ -96,7 +100,7 @@ func (s *Settings) getAssetCodes() {
 	if err != nil {
 		panic(err)
 	}
-	json.Unmarshal(body, &jsonData)
+	ffjson.Unmarshal(body, &jsonData)
 
 	for assetPair, data := range jsonData.(map[string]interface{}) {
 		assetID := data.(map[string]interface{})["id"].(float64)
@@ -113,111 +117,103 @@ func (s *Settings) Initialize(symbols ...string) {
 	s.SubscribeWizard(symbols...)
 }
 
+// parseOrderbookSnapshots: Handles the initial ticks where the orderbook snapshots are sent.
+// Only to be called from the SubscribeWizard method.
+func (s *Settings) parseOrderbookSnapshots(symbols ...string) {
+	var (
+		snapshot    = make([]orderbook.Snapshot, len(symbols))
+		jsonMessage orderbook.IPoloniexOrderbookSnapshot
+		byteMessage []byte
+	)
+	// Poloniex for whatever reason sends `n` empty ticks before sending the actual data, where `n` = len(symbols)
+	// Read those ticks and then get to the actual parsing
+	for i := 0; i < len(symbols); i++ {
+		_, _, _ = s.conn.ReadMessage()
+	}
+	for i := 0; i < len(symbols); i++ {
+		_, byteMessage, _ = s.conn.ReadMessage()
+
+		// Scan the byte array for the first occurance of the left curly brace.
+		for char := 0; char < len(byteMessage); char++ {
+			if byteMessage[char] == '{' {
+				byteMessage = byteMessage[char:]
+				byteMessage = byteMessage[:len(byteMessage)-3] // Orderbook ticks on Poloniex have 3 right square brackets before ending
+				break
+			}
+		}
+		jsonMessage.UnmarshalJSON(byteMessage)
+
+		snapshot[i].Timestamp = uint64(time.Now().UnixNano() / 1000)
+		snapshot[i].StartSeq = 0
+		snapshot[i].AskSide = jsonMessage.Orderbook[0]
+		snapshot[i].BidSide = jsonMessage.Orderbook[1]
+	}
+}
+
 // ReceiveMessageLoop : This runs infinitely until the connection is closed by the server.
 // It is recommended that you call this method concurrently.
 func (s *Settings) ReceiveMessageLoop(output chan orderbook.Delta) {
-	// TODO: Get poloniex current tick count by asking the database itself
-	var (
-		tickMessage orderbook.ITickMessage
-		seqCount    uint64
-	)
 	for {
-		// TODO: Consider replacing this method with a `conn.ReadMessage(&tickMessage)` call instead.
-		// Might yield better performance in the longer run if we handle all errors and the data ourselves.
-		s.conn.ReadJSON(&tickMessage)
+		var (
+			tickBytes []byte
+			buf       bytes.Buffer
+		)
+		_, tickBytes, _ = s.conn.ReadMessage()
 
-		if len(tickMessage) < 3 {
-			continue
+		buf.Write([]byte(`{"assetCode":`))
+
+		// This is painful to type out, but we're doing this for the sake of efficiency
+		if tickBytes[2] == ',' {
+			buf.Write(tickBytes[1:2])
+		} else if tickBytes[3] == ',' {
+			buf.Write(tickBytes[1:3])
+		} else if tickBytes[4] == ',' {
+			buf.Write(tickBytes[1:4])
 		}
+		buf.Write([]byte(`,"data":`))
 
-		blockTimestamp := uint64(time.Now().UnixNano())
-		msgData := tickMessage[2].([]interface{})
-		dataLen := len(msgData)
-		deltas := make([]orderbook.Delta, dataLen)
+		for char := 13; ; char++ {
+			// Once we have the first occurence, check for others
+			if tickBytes[char] == '[' {
+				var localBuf bytes.Buffer
+				localBuf.Write(tickBytes[0:char])
 
-	dataIter: // Define a block to escape the orderbook parsing logic
-		for i := 0; i < dataLen; i++ {
-			seqCount++ // Update the sequence count
+				for dataChar := char + 1; ; dataChar++ {
+					// Check for various conditions that indicate a non-string entry
+					if tickBytes[dataChar] == '[' {
+						switch tickBytes[dataChar+2] { // Update type. "o" is an update, and "t" is a trade event
+						case 'o':
+							var (
+								event uint8
+								side  = tickBytes[dataChar+5] // without fail, this one will always be 5 chars away
+								size  float64
+								price float64
 
-			var (
-				eventType uint8
-				price     float64
-				size      float64
-				startTime = time.Now()
-			)
+								priceIndex int
+								sizeIndex  int
+							)
+							for pricePoint := dataChar + 8; pricePoint < 16; pricePoint++ {
+								if tickBytes[pricePoint] == '.' {
+									// This monster converts the price float enclosed within into a useable float64 value
+									price = math.Float64frombits(binary.LittleEndian.Uint64(tickBytes[dataChar+8 : pricePoint+8]))
+									priceIndex = pricePoint + 8
+									break
+								}
+							}
+							for sizePoint := priceIndex + 4; sizePoint < 16; sizePoint++ {
+								if tickBytes[sizePoint] == '.' {
+									// Parses `size` byte slice to a floating point number
+									size = math.Float64frombits(binary.LittleEndian.Uint64(tickBytes[priceIndex+4 : sizePoint+8]))
+									char = sizePoint + 11
+									break
+								}
+							}
 
-			switch tickData := msgData[i].([]interface{}); tickData[0] {
-			case "o": // Orderbook updates
-				// Poloniex update format:
-				//	[<MARKET_ID>, <MARKET_TICK>, [
-				//		[<TICK_TYPE>, <BOOK_SIDE>, <PRICE>, <NEW_PRICE>],
-				//		...
-				//	]]
-				price, _ = strconv.ParseFloat(tickData[2].(string), 64)
-				size, _ = strconv.ParseFloat(tickData[3].(string), 64)
-
-				switch tickData[1] { // Book side
-				case 0: // Ask
-					switch size {
-					case 0.00: // Poloniex removes orderbook entries by submitting a zero for their size
-						eventType = orderbook.IsAskRemove
-					default:
-						eventType = orderbook.IsAskUpdate
+						case 't':
+						}
 					}
-				case 1: // Bid
-					switch size {
-					case 0.00: // Poloniex removes orderbook entries by submitting a zero for their size
-						eventType = orderbook.IsBidRemove
-
-					default:
-						eventType = orderbook.IsBidUpdate
-					}
 				}
-
-			case "t": // Trade event
-				price, _ = strconv.ParseFloat(tickData[3].(string), 64)
-				size, _ = strconv.ParseFloat(tickData[4].(string), 64)
-
-				// TODO: We need to check if the trade results in a deleted orderbook entry
-				switch tickData[2] { // Book side
-				case 0: // Ask
-					eventType = orderbook.IsTrade | orderbook.IsAsk
-				case 1: // Bid
-					eventType = orderbook.IsTrade | orderbook.IsBid
-				}
-
-			case "i": // Base orderbook event
-				// The Poloniex orderbook tick is formatted as follows:
-				//	[<MARKET_ID>, <MARKET_TICK>, {
-				//		currencyPair: <MARKET>_<ASSET>,
-				//		orderBook: [
-				//			<ASK>{<ASK_PRICE>: <AMOUNT_ASSET>, ...},
-				//			<BID>{<BID_PRICE>: <AMOUNT_ASSET>, ...}
-				//		]
-				//	}]
-
-				// snapshotTick converts the orderbook data into a parsable format
-				snapshotTick := tickData[1].(map[string]interface{})["orderBook"].([]interface{})
-				snapshot := orderbook.Snapshot{
-					Timestamp: blockTimestamp,
-					StartSeq:  1,
-					AskSide:   snapshotTick[0],
-					BidSide:   snapshotTick[1],
-				}
-				continue dataIter
 			}
-
-			deltas[i] = orderbook.Delta{
-				TimeDelta: blockTimestamp,
-				Seq:       seqCount,
-				Event:     eventType,
-				Price:     price,
-				Size:      size,
-			}
-			end := time.Now().Sub(startTime)
-			//fmt.Println(deltas[i])
-			//output <- deltas[i]
-			fmt.Println(end)
 		}
 	}
 }

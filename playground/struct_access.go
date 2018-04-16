@@ -1,5 +1,8 @@
 package main
 
+// We want to identify in this test the performance differences by accessing a struct by array value vs initializing it at
+// the end and inserting it at that time. We use the orderbook.Delta structure to benchmark these both methods.
+
 import (
 	"fmt"
 	"time"
@@ -79,7 +82,7 @@ func main() {
 
 		end = time.Now().Sub(start)
 		loop2[x] = uint64(end / time.Nanosecond)
-		fmt.Println("struct jit instantiation: ", end)
+		fmt.Println("struct jit init: ", end)
 		fmt.Println("==================")
 	}
 	loop1Min, loop1Max := minMax(loop1)
@@ -88,3 +91,6 @@ func main() {
 	loop2Min, loop2Max := minMax(loop2)
 	fmt.Printf("Loop2 Average: %f, min: %d, max: %d, std: None\n", average(loop2), loop2Min, loop2Max)
 }
+
+// gccgo produces faster times for jit struct init, but is severely limited by array accessing.
+// go compiler has no difference between these two methods. Perhaps optimizing for gccgo might be a mistake?
