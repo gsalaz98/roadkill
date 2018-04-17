@@ -5,15 +5,15 @@ package orderbook
 const (
 	IsBidTrade       uint8 = 0
 	IsBidUpdate      uint8 = 1
-	IsBidRemove      uint8 = 2 // For support on exchanges that transmit a remove event
-	IsBidTradeRemove uint8 = 11
+	IsBidRemove      uint8 = 2
+	IsBidTradeRemove uint8 = 11 // For support purposes only
 
 	IsAskTrade       uint8 = 3
 	IsAskUpdate      uint8 = 4
-	IsAskRemove      uint8 = 5 // For support on exchanges that transmit a remove event
-	IsAskTradeRemove uint8 = 10
+	IsAskRemove      uint8 = 5
+	IsAskTradeRemove uint8 = 10 // For support purposes only
 
-	// In case we decide to use this instead
+	// DEPRECATED. Use events defined above instead
 	IsBid    uint8 = 1 << 0
 	IsAsk    uint8 = 1 << 1
 	IsTrade  uint8 = 1 << 2
