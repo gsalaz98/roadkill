@@ -152,6 +152,10 @@ func (s *Settings) parseOrderbookSnapshots(symbols ...string) {
 // ReceiveMessageLoop : This runs infinitely until the connection is closed by the server.
 // It is recommended that you call this method concurrently.
 func (s *Settings) ReceiveMessageLoop(output chan orderbook.Delta) {
+	var (
+		totalLoops            int
+		smallestBracketLength = 1000
+	)
 	for {
 		var (
 			tickBytes []byte
@@ -160,98 +164,114 @@ func (s *Settings) ReceiveMessageLoop(output chan orderbook.Delta) {
 		)
 		_, tickBytes, _ = s.conn.ReadMessage()
 
-		tickPositions := make([]int, 128)
+		tickPositions := make([]int, len(tickBytes)/20)
 		tickCount := -1
 
 		start := time.Now()
-	tickIter:
-		for char := 3; ; char++ {
-			// Get all of the left bracket indicies
-			if tickBytes[char] == '[' {
-				if tickCount == -1 { // There's 2 left brackets before the real data
+
+		if totalLoops < 100 { // We might have more than 100 symbols on this connection. Let's make sure we all opinions before we continue ;)
+			for char := 3; char < len(tickBytes); char++ {
+				// Get all of the left bracket indicies
+				if tickBytes[char] == '[' {
+					if tickCount == -1 { // There's 2 left brackets before the real data
+						tickCount++
+						continue
+					}
+					tickPositions[tickCount] = char
 					tickCount++
-					continue
+
+					if tickCount == 0 && char < smallestBracketLength {
+						smallestBracketLength = char
+					}
+					if len(tickBytes) < char+33 {
+						break
+					}
+					char += 33
 				}
-				tickPositions[tickCount] = char
-				tickCount++
-				if len(tickBytes) < char+33 {
-					break
+			}
+		} else { // We copy the code here to use the smallest distance between the start of the data and avoid wasting cycles iterating on nothing
+			tickCount = 0
+			for char := smallestBracketLength; char < len(tickBytes); char++ {
+				// Get all of the left bracket indicies
+				if tickBytes[char] == '[' {
+					tickPositions[tickCount] = char
+					tickCount++
+
+					if len(tickBytes) < char+33 {
+						break
+					}
+					char += 32 // Minimum length of a piece of update data. Updates are the tiniest piece of data that gets sent
 				}
-				char += 33
 			}
 		}
-			// Once we have the first occurence, check for others
-			if tickBytes[char] == '[' {
-				for dataChar := char + 1; dataChar < len(tickBytes); dataChar++ {
-					// Check for various conditions that indicate a non-string entry
-					if tickBytes[dataChar] == '[' {
-						var (
-							event uint8
-							size  float64
-							price float64
-						)
-						switch tickBytes[dataChar+2] { // Update type. "o" is an update, and "t" is a trade event
-						case 'o': // Updates
-							var (
-								side       = tickBytes[dataChar+5] // without fail, this one will always be 5 chars away
-								priceIndex int
-							)
-							for pricePoint := dataChar + 8; pricePoint < 32; pricePoint++ {
-								if tickBytes[pricePoint] == '.' {
-									// This monster converts the price float enclosed within into a useable float64 value
-									price = math.Float64frombits(binary.LittleEndian.Uint64(tickBytes[dataChar+8 : pricePoint+8]))
-									priceIndex = pricePoint + 8
-									break
-								}
+	tickIter:
+		for char := 0; char <= tickCount; char++ {
+			dataChar := tickPositions[char]
+			// Check for various conditions that indicate a non-string entry
+			var (
+				event uint8
+				size  float64
+				price float64
+			)
+			switch tickBytes[dataChar+2] { // Update type. "o" is an update, and "t" is a trade event
+			case 'o': // Updates
+				var (
+					side       = tickBytes[dataChar+5] // without fail, this one will always be 5 chars away
+					priceIndex int
+				)
+				for pricePoint := dataChar + 8; pricePoint < 32; pricePoint++ {
+					if tickBytes[pricePoint] == '.' {
+						// This monster converts the price float enclosed within into a useable float64 value
+						price = math.Float64frombits(binary.LittleEndian.Uint64(tickBytes[dataChar+8 : pricePoint+8]))
+						priceIndex = pricePoint + 8
+						break
+					}
+				}
+				for sizePoint := priceIndex + 4; sizePoint < 64; sizePoint++ {
+					if tickBytes[sizePoint] == '.' {
+						// Parses `size` byte slice to a floating point number
+						size = math.Float64frombits(binary.LittleEndian.Uint64(tickBytes[priceIndex+4 : sizePoint+8]))
+						char = sizePoint + 11 // Let's set the char cursor ready for the next entry in the message
+
+						if side == orderbook.PoloniexBid {
+							if size == 0.0 {
+								event = orderbook.IsBidRemove
+							} else {
+								event = orderbook.IsBidUpdate
 							}
-							for sizePoint := priceIndex + 4; sizePoint < 64; sizePoint++ {
-								if tickBytes[sizePoint] == '.' {
-									// Parses `size` byte slice to a floating point number
-									size = math.Float64frombits(binary.LittleEndian.Uint64(tickBytes[priceIndex+4 : sizePoint+8]))
-									char = sizePoint + 11 // Let's set the char cursor ready for the next entry in the message
-
-									if side == orderbook.PoloniexBid {
-										if size == 0.0 {
-											event = orderbook.IsBidRemove
-										} else {
-											event = orderbook.IsBidUpdate
-										}
-									} else if side == orderbook.PoloniexAsk {
-										if size == 0.0 {
-											event = orderbook.IsAskRemove
-										} else {
-											event = orderbook.IsAskUpdate
-										}
-									}
-									if len(tickBytes) < sizePoint+16 {
-										break tickIter
-									}
-									//fmt.Println(event, side, size, price, sizePoint, len(tickBytes))
-									_ = orderbook.Delta{
-										TimeDelta: 0,
-										Seq:       0,
-										Event:     event,
-										Price:     price,
-										Size:      size,
-									}
-									char = sizePoint + 11 // Let's set the char cursor ready for the next entry in the message
-								}
+						} else if side == orderbook.PoloniexAsk {
+							if size == 0.0 {
+								event = orderbook.IsAskRemove
+							} else {
+								event = orderbook.IsAskUpdate
 							}
-
-						case 't':
-							///var (
-							///	side  uint8
-							///	event uint8
-							///	price float64
-							///	size  float64
-							///)
-							///// Find the first decimal point, then get the order side (bid/ask) by using decimal index
-							///for pricePoint := char + 5; pricePoint < 64; pricePoint++ {
-
-							///}
+						}
+						// Add a terminating clause here to prevent accessing an index that doesn't exist.
+						if len(tickBytes) < sizePoint+16 {
+							break tickIter
+						}
+						//fmt.Println(event, side, size, price, sizePoint, len(tickBytes))
+						_ = orderbook.Delta{
+							TimeDelta: 0,
+							Seq:       0,
+							Event:     event,
+							Price:     price,
+							Size:      size,
 						}
 					}
 				}
+
+			case 't':
+				///var (
+				///	side  uint8
+				///	event uint8
+				///	price float64
+				///	size  float64
+				///)
+				///// Find the first decimal point, then get the order side (bid/ask) by using decimal index
+				///for pricePoint := char + 5; pricePoint < 64; pricePoint++ {
+
+				///}
 			}
 		}
 		end := time.Now()
