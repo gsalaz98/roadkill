@@ -160,19 +160,26 @@ func (s *Settings) ReceiveMessageLoop(output chan orderbook.Delta) {
 		)
 		_, tickBytes, _ = s.conn.ReadMessage()
 
-		// This is painful to type out, but we're doing this for the sake of efficiency
-		//if tickBytes[2] == ',' {
-		//	assetCode = binary.LittleEndian.Uint16(tickBytes[1:2])
-		//} else if tickBytes[3] == ',' {
-		//	assetCode = binary.LittleEndian.Uint16(tickBytes[1:3])
-		//} else if tickBytes[4] == ',' {
-		//	assetCode = binary.LittleEndian.Uint16(tickBytes[1:4])
-		//}
-		//fmt.Println(assetCode)
+		tickPositions := make([]int, 128)
+		tickCount := -1
 
 		start := time.Now()
 	tickIter:
-		for char := 13; char < len(tickBytes); char++ {
+		for char := 3; ; char++ {
+			// Get all of the left bracket indicies
+			if tickBytes[char] == '[' {
+				if tickCount == -1 { // There's 2 left brackets before the real data
+					tickCount++
+					continue
+				}
+				tickPositions[tickCount] = char
+				tickCount++
+				if len(tickBytes) < char+33 {
+					break
+				}
+				char += 33
+			}
+		}
 			// Once we have the first occurence, check for others
 			if tickBytes[char] == '[' {
 				for dataChar := char + 1; dataChar < len(tickBytes); dataChar++ {
