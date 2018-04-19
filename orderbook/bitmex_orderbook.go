@@ -5,10 +5,10 @@ type IBitMexTick struct {
 	Table  string `json:"table"`
 	Action string `json:"action"`
 	Data   []struct {
-		Symbol string `json:"symbol"`
-		ID     int64  `json:"id"`
-		Side   string `json:"side"`
-		Size   int    `json:"size"`
-		Price  int    `json:"price"`
+		Symbol string  `json:"symbol"`
+		ID     int64   `json:"id"`
+		Side   string  `json:"side"`
+		Size   int     `json:"size"`
+		Price  float32 `json:"price"`
 	} `json:"data"`
 }

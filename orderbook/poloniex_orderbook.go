@@ -7,6 +7,7 @@ const (
 	PoloniexAsk = 0
 )
 
+// IPoloniexOrderbookSnapshot : orderbook struct definition. We expect orderbook data to come in this format
 type IPoloniexOrderbookSnapshot struct {
 	CurrencyPair string              `json:"currencyPair"`
 	Orderbook    []map[string]string `json:"orderBook"`

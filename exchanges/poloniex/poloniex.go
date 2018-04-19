@@ -1,11 +1,10 @@
 package poloniex
 
 import (
-	"encoding/binary"
 	"fmt"
 	"io/ioutil"
-	"math"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -18,11 +17,13 @@ const ExchangeName string = "poloniex"
 
 // Settings : Structure is used to load settings into the application.
 type Settings struct {
-	connURL    string
-	headers    http.Header
-	messages   []map[string]string
-	conn       *websocket.Conn
-	assetTable map[float64]string
+	connURL  string
+	headers  http.Header
+	messages []map[string]string
+	conn     *websocket.Conn
+	symbols  []string
+
+	assetTable map[float64]string // Poloniex-specific implementation, used to identify asset from tick data
 }
 
 // DefaultSettings : Setup a simple skeleton of the Settings struct for ease of use
@@ -54,6 +55,8 @@ func (s *Settings) SendMessages(messages []map[string]string) {
 // Settings struct based off a list of assets passed as variadic string parameters
 func (s *Settings) SubscribeWizard(symbols ...string) {
 	s.messages = make([]map[string]string, len(symbols))
+	s.symbols = symbols
+
 	for _, asset := range symbols {
 		s.messages = append(s.messages, map[string]string{
 			"command": "subscribe",
@@ -149,132 +152,167 @@ func (s *Settings) parseOrderbookSnapshots(symbols ...string) {
 	}
 }
 
-// ReceiveMessageLoop : This runs infinitely until the connection is closed by the server.
+// ReceiveMessageLoop : This runs infinitely until the connection is closed by the user or server.
 // It is recommended that you call this method concurrently.
 func (s *Settings) ReceiveMessageLoop(output chan orderbook.Delta) {
 	var (
 		totalLoops            int
 		smallestBracketLength = 1000
+		minimumLoops          = 50
 	)
 	for {
 		var (
 			tickBytes []byte
 			//assetCode uint16
-			//deltas    []orderbook.Delta
 		)
 		_, tickBytes, _ = s.conn.ReadMessage()
 
-		tickPositions := make([]int, len(tickBytes)/20)
-		tickCount := -1
+		//start := time.Now()
 
-		start := time.Now()
+		tickPositions := make([]int, int(len(tickBytes)/20)) // This is a reasonable estimate of the amount of ticks encapsulated within the byte array
+		firstTickEncountered := false                        // Use this to signal whether we've encountered the first tick or not. For use in the loops below
+		tickIndex := 0                                       // To keep an index of the last location we've inserted
 
-		if totalLoops < 100 { // We might have more than 100 symbols on this connection. Let's make sure we all opinions before we continue ;)
-			for char := 3; char < len(tickBytes); char++ {
-				// Get all of the left bracket indicies
-				if tickBytes[char] == '[' {
-					if tickCount == -1 { // There's 2 left brackets before the real data
-						tickCount++
-						continue
-					}
-					tickPositions[tickCount] = char
-					tickCount++
-
-					if tickCount == 0 && char < smallestBracketLength {
-						smallestBracketLength = char
-					}
-					if len(tickBytes) < char+33 {
-						break
-					}
-					char += 33
-				}
-			}
-		} else { // We copy the code here to use the smallest distance between the start of the data and avoid wasting cycles iterating on nothing
-			tickCount = 0
+		if minimumLoops < totalLoops { // We might have more than 100 symbols on this connection. Let's make sure we all opinions before we continue ;)
+			// For efficiency purposes, we place the most access branch before the second one. This runs second!
+			// *****************
+			// We copy the code here to use the smallest distance between the start of the data and avoid wasting cycles iterating on nothing
 			for char := smallestBracketLength; char < len(tickBytes); char++ {
 				// Get all of the left bracket indicies
-				if tickBytes[char] == '[' {
-					tickPositions[tickCount] = char
-					tickCount++
+				if firstTickEncountered && tickBytes[char] == '[' {
+					tickPositions[tickIndex] = char
+					tickIndex++
 
-					if len(tickBytes) < char+33 {
+					// To Make sure we don't go out of bounds
+					if len(tickBytes) < char+32 {
 						break
 					}
 					char += 32 // Minimum length of a piece of update data. Updates are the tiniest piece of data that gets sent
+				} else if !firstTickEncountered && tickBytes[char] == '[' {
+					firstTickEncountered = true
+					if char < smallestBracketLength {
+						smallestBracketLength = char + 1 // Add one extra to get the index of the first *real* bracket
+					}
+				}
+			}
+		} else { // This loops a fixed amount before switching to the faster one. We do this to get the minimum shortest length of the first bracket.
+			for char := 3; char < len(tickBytes); char++ {
+				if firstTickEncountered && tickBytes[char] == '[' { // Ensures that we've encountered the first left bracket
+					// Comments in the block above should explain the importance of all these elements
+					tickPositions[tickIndex] = char
+					tickIndex++
+
+					if len(tickBytes) < char+32 {
+						break
+					}
+					char += 32
+				} else if !firstTickEncountered && tickBytes[char] == '[' {
+					firstTickEncountered = true
+					if char < smallestBracketLength {
+						smallestBracketLength = char + 1
+					}
 				}
 			}
 		}
-	tickIter:
-		for char := 0; char <= tickCount; char++ {
-			dataChar := tickPositions[char]
-			// Check for various conditions that indicate a non-string entry
+		// Loops over every bracket. For each bracket, parse all of the data
+		for char := 0; char < tickIndex; char++ {
 			var (
-				event uint8
-				size  float64
-				price float64
+				dataIndex = tickPositions[char] // Gets starting index of left square bracket `[`
+				side      uint8
+				price     float64
+				size      float64
+				action    uint8
 			)
-			switch tickBytes[dataChar+2] { // Update type. "o" is an update, and "t" is a trade event
-			case 'o': // Updates
-				var (
-					side       = tickBytes[dataChar+5] // without fail, this one will always be 5 chars away
-					priceIndex int
-				)
-				for pricePoint := dataChar + 8; pricePoint < 32; pricePoint++ {
-					if tickBytes[pricePoint] == '.' {
-						// This monster converts the price float enclosed within into a useable float64 value
-						price = math.Float64frombits(binary.LittleEndian.Uint64(tickBytes[dataChar+8 : pricePoint+8]))
-						priceIndex = pricePoint + 8
-						break
-					}
-				}
-				for sizePoint := priceIndex + 4; sizePoint < 64; sizePoint++ {
-					if tickBytes[sizePoint] == '.' {
-						// Parses `size` byte slice to a floating point number
-						size = math.Float64frombits(binary.LittleEndian.Uint64(tickBytes[priceIndex+4 : sizePoint+8]))
-						char = sizePoint + 11 // Let's set the char cursor ready for the next entry in the message
 
-						if side == orderbook.PoloniexBid {
-							if size == 0.0 {
-								event = orderbook.IsBidRemove
-							} else {
-								event = orderbook.IsBidUpdate
+			switch tickBytes[dataIndex+2] { // Update type. "o" is an update, and "t" is a trade event
+			case 'o': // Book updates and removes
+				// Orderbook information
+				var (
+					// Looping specific control flow variables
+					priceEncountered = false
+					sizeIters        int
+				)
+				// Orderbook information
+				side = (1 + tickBytes[dataIndex+5]) << 4 // Increment side and make it equal to either orderbook.(IsBid || IsAsk)
+
+				for dotIndex := dataIndex + 8; ; dotIndex++ {
+					if tickBytes[dotIndex] == '.' {
+						if priceEncountered { // Get everything from the size data iteration
+							// Parses `size` byte slice to a floating point number
+							size, _ = strconv.ParseFloat(string(tickBytes[dotIndex-sizeIters-1:dotIndex+9]), 64)
+							action = side ^ orderbook.IsUpdate
+
+							if size == 0 {
+								action = side ^ orderbook.IsRemove
 							}
-						} else if side == orderbook.PoloniexAsk {
-							if size == 0.0 {
-								event = orderbook.IsAskRemove
-							} else {
-								event = orderbook.IsAskUpdate
+
+							//fmt.Println(string(tickBytes))
+							_ = orderbook.Delta{
+								TimeDelta: 0,
+								Seq:       0,
+								Event:     action,
+								Price:     price,
+								Size:      size,
 							}
+
+							break // Passes control back to the bracket iterator
+
+						} else {
+							// First entry we hit will contain price data
+							// This monster converts the price float enclosed within into a useable float64 value
+							priceEncountered = true
+							price, _ = strconv.ParseFloat(string(tickBytes[dataIndex+8:dotIndex+9]), 64)
+							dotIndex += 12 // Adds the absolute minimum distance from the next '.'
 						}
-						// Add a terminating clause here to prevent accessing an index that doesn't exist.
-						if len(tickBytes) < sizePoint+16 {
-							break tickIter
-						}
-						//fmt.Println(event, side, size, price, sizePoint, len(tickBytes))
-						_ = orderbook.Delta{
-							TimeDelta: 0,
-							Seq:       0,
-							Event:     event,
-							Price:     price,
-							Size:      size,
-						}
+					} else if priceEncountered {
+						sizeIters++ // Count how many times we've iterated searching for the size decimal point
 					}
 				}
 
 			case 't':
-				///var (
-				///	side  uint8
-				///	event uint8
-				///	price float64
-				///	size  float64
-				///)
-				///// Find the first decimal point, then get the order side (bid/ask) by using decimal index
-				///for pricePoint := char + 5; pricePoint < 64; pricePoint++ {
+				var ( // Declare looping flow control variables
+					commasIterated int
+					commaIndex     int
+				)
+				for dotIndex := dataIndex + 5; ; dotIndex++ {
+					fmt.Println("Index: ", dotIndex, " ; len(tickBytes): ", len(tickBytes))
+					if commasIterated == 0 && tickBytes[dotIndex] == ',' {
+						side = (1 + tickBytes[dotIndex+1]) << 4 // Increment side and make it equal to either orderbook.(IsBid || IsAsk)
+						action = side ^ orderbook.IsTrade
 
-				///}
+						commaIndex = dotIndex + 4 // Set first comma equal to the start of the price
+						//dotIndex++                // Skips to the first possible decimal point in the price field
+						commasIterated++
+						fmt.Println(string(tickBytes))
+						fmt.Println(string(tickBytes[dotIndex:]))
+
+					}
+					if tickBytes[dotIndex] == '.' {
+						fmt.Println("Something happend :O", commasIterated)
+						if commasIterated == 1 { // We should be getting to the price field by now
+							price, _ = strconv.ParseFloat(string(tickBytes[commaIndex:dotIndex+9]), 64)
+							commaIndex = dotIndex + 13 // commaIndex gets set to the first possible number in the set
+							dotIndex = dotIndex + 13   // dotIndex becomes earliest possible '.'
+
+							commasIterated++
+						} else {
+							size, _ = strconv.ParseFloat(string(tickBytes[commaIndex:dotIndex+9]), 64)
+
+							fmt.Println(string(tickBytes))
+							fmt.Println(string(tickBytes[commaIndex:]))
+
+							//fmt.Println("TRADE: ", orderbook.Delta{
+							//TimeDelta: 0,
+							//Seq:       0,
+							//Event:     action,
+							//Price:     price,
+							//Size:      size,
+							//})
+							break
+						}
+					}
+				}
 			}
 		}
-		end := time.Now()
-		fmt.Println(end.Sub(start))
 	}
 }

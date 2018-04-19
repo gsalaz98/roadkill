@@ -15,6 +15,7 @@ type Settings struct {
 	headers  http.Header
 	messages []map[string]string
 	conn     *websocket.Conn
+	symbols  []string
 }
 
 // DefaultSettings : Setup a simple skeleton of the Settings struct for ease of use
@@ -95,48 +96,34 @@ func (s *Settings) Initialize(symbols ...string) {
 	s.SubscribeWizard(symbols...)
 }
 
-// parseOrderbookTick : Private method, only to be called from the method `SubscribeWizard`
-func (s *Settings) parseOrderbookTick(symbols ...string) {
-
-}
-
 // ReceiveMessageLoop : This runs infinitely until the connection is closed by the user or server.
 // It is recommended that you call this method concurrently.
 func (s *Settings) ReceiveMessageLoop(output chan orderbook.Delta) {
 	var (
-		bitmexTick orderbook.IBitMexTick
-		bitmexSnapshot ordrebook.Snapshot
-		tickBytes  []byte
+		tickBytes        []byte
+		partialIndicator = []byte("keys")
 	)
 
-	for i := 0; i <= len(symbols); i++ {
+	// Read the first couple of messages; They don't have any useful information in them
+	// N.B. - This doesn't parse any orderbook data, just meaningless ticks
+	for i := 0; i <= len(s.symbols); i++ {
 		_, _, _ = s.conn.ReadMessage()
 	}
 
+	// We will be parsing all of our data from the byte array for performance purposes
 	for {
 		_, tickBytes, _ = s.conn.ReadMessage()
-		bitmexTick.UnmarshalJSON(tickBytes)
 
-		switch bitmexTick.Action {
-		case "partial":
-			for entryIndex, level := range bitmexTick.Data {
-				switch level.Side {
-				case "Buy":
-				case "Sell"
-				}
-			}
-		case "update":
-			for entryIndex, level := range bitmexTick.Data {
-			
-			}
-		case "insert":
-			for entryIndex, level := range bitmexTick.Data {
+		// Put the more used path first before to optimize runtime
 
-			}
-		case "delete":
-			for entryIndex, level := range bitmexTick.Data {
+		// This compares the first character in the second key. In this instance, we want to check
+		// if this is a partial (i.e. orderbook snapshot), which transmits a "key" field. We check
+		// for equality to the first character, 'k'. Orderbook updates, deletes, and trades
 
-			}
+		if tickBytes[24] != partialIndicator[0] {
+
+		} else {
+
 		}
 	}
 }
