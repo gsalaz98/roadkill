@@ -271,43 +271,36 @@ func (s *Settings) ReceiveMessageLoop(output chan orderbook.Delta) {
 
 			case 't':
 				var ( // Declare looping flow control variables
-					commasIterated int
-					commaIndex     int
+					sideGathered  bool
+					priceGathered bool
+					commaIndex    int
 				)
 				for dotIndex := dataIndex + 5; ; dotIndex++ {
-					fmt.Println("Index: ", dotIndex, " ; len(tickBytes): ", len(tickBytes))
-					if commasIterated == 0 && tickBytes[dotIndex] == ',' {
+					if !sideGathered && tickBytes[dotIndex] == ',' {
 						side = (1 + tickBytes[dotIndex+1]) << 4 // Increment side and make it equal to either orderbook.(IsBid || IsAsk)
 						action = side ^ orderbook.IsTrade
 
 						commaIndex = dotIndex + 4 // Set first comma equal to the start of the price
-						//dotIndex++                // Skips to the first possible decimal point in the price field
-						commasIterated++
-						fmt.Println(string(tickBytes))
-						fmt.Println(string(tickBytes[dotIndex:]))
+						sideGathered = true       //
+						dotIndex += 3             // Skips to the first possible decimal point in the price field
 
-					}
-					if tickBytes[dotIndex] == '.' {
-						fmt.Println("Something happend :O", commasIterated)
-						if commasIterated == 1 { // We should be getting to the price field by now
+					} else if sideGathered && tickBytes[dotIndex] == '.' {
+						if !priceGathered { // We should be getting to the price field by now
 							price, _ = strconv.ParseFloat(string(tickBytes[commaIndex:dotIndex+9]), 64)
 							commaIndex = dotIndex + 13 // commaIndex gets set to the first possible number in the set
-							dotIndex = dotIndex + 13   // dotIndex becomes earliest possible '.'
+							dotIndex += 12             // dotIndex becomes earliest possible '.' -- Set to one before '.' index because variable increments
 
-							commasIterated++
+							priceGathered = true
 						} else {
 							size, _ = strconv.ParseFloat(string(tickBytes[commaIndex:dotIndex+9]), 64)
 
-							fmt.Println(string(tickBytes))
-							fmt.Println(string(tickBytes[commaIndex:]))
-
-							//fmt.Println("TRADE: ", orderbook.Delta{
-							//TimeDelta: 0,
-							//Seq:       0,
-							//Event:     action,
-							//Price:     price,
-							//Size:      size,
-							//})
+							fmt.Println("TRADE: ", orderbook.Delta{
+								TimeDelta: 0,
+								Seq:       0,
+								Event:     action,
+								Price:     price,
+								Size:      size,
+							})
 							break
 						}
 					}
