@@ -2,7 +2,6 @@ package orderbook
 
 // IBitMexTick : Every tick passed will have this format.
 type IBitMexTick struct {
-	Table  string `json:"table"`
 	Action string `json:"action"`
 	Data   []struct {
 		Symbol string  `json:"symbol"`
