@@ -29,7 +29,7 @@ func main() {
 	//bitm.ReceiveMessageLoop(receiver)
 
 	bitm := bitmexslow.DefaultSettings
-	bitm.ChannelType = "orderBookL2_25"
+	bitm.ChannelType = []string{"orderBookL2_25"}
 
 	bitm.Initialize("XBTUSD", "ETHM18")
 	bitm.ReceiveMessageLoop(&receiver)
