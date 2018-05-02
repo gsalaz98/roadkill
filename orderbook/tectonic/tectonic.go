@@ -1,4 +1,4 @@
-package main
+package tectonic
 
 import (
 	"bytes"
@@ -7,10 +7,11 @@ import (
 	"strconv"
 
 	"github.com/pquerna/ffjson/ffjson"
+	"gitlab.com/CuteQ/roadkill/orderbook"
 )
 
-// TectonicTick : Contains data that was loaded in from the datastore
-type TectonicTick struct {
+// Tick : Contains data that was loaded in from the datastore
+type Tick struct {
 	Timestamp float64 `json:"ts"`
 	Seq       uint64  `json:"seq"`
 	IsTrade   bool    `json:"is_trade"`
@@ -47,8 +48,8 @@ type Tectonic struct {
 // Create(dbName string) 						error					done
 // Get(amount int) 								( []TTick, error )		done
 // GetFrom(amount int, dbName string)			( []TTick, error )		done
-// Insert(t TTick)								error					incomplete
-// InsertInto(dbName string, t TTick)			error					incomplete
+// Insert(t TTick)								error					done
+// InsertInto(dbName string, t TTick)			error					done
 // Count()										uint64					done
 // CountAll()									uint64					done
 // Clear()										error					done
@@ -61,14 +62,11 @@ type Tectonic struct {
 //
 // Locally defined methods:
 // ****************************
-// Connect()									error
-// SendMessage()								( string, error )
+// Connect()									error					done
+// SendMessage()								( string, error )		done
 //
-// GetAsDelta(amount int)						( orderbook.DeltaBatch, error )
-// GetFromAsDelta(amount int, dbName string)	( orderbook.DeltaBatch, error )
-// BulkAddDelta(deltas orderbook.DeltaBatch)	error
-// BulkAddDeltaInto(dbName string, deltas)		error
-// InsertDelta(delta orderbook.Delta)			error
+// DeltaToTick(delta orderbook.Delta)			Tick			done
+// DeltaBatchToTick(deltas []orderbook.Delta)	[]Tick			done
 // ****************************
 
 // TectonicPool : TODO
@@ -123,7 +121,7 @@ func (t *Tectonic) Perf() (string, error) {
 }
 
 // BulkAdd : TODO
-func (t *Tectonic) BulkAdd(ticks []TectonicTick) error {
+func (t *Tectonic) BulkAdd(ticks []Tick) error {
 	_, _ = t.SendMessage("BULKADD")
 
 	for _, tick := range ticks {
@@ -147,7 +145,7 @@ func (t *Tectonic) BulkAdd(ticks []TectonicTick) error {
 }
 
 // BulkAddInto : TODO
-func (t *Tectonic) BulkAddInto(dbName string, ticks []TectonicTick) error {
+func (t *Tectonic) BulkAddInto(dbName string, ticks []Tick) error {
 	_, _ = t.SendMessage("BULKADD INTO " + dbName)
 
 	for _, tick := range ticks {
@@ -188,11 +186,11 @@ func (t *Tectonic) Create(dbName string) error {
 }
 
 // Get : "Returns `amount` items from current store"
-func (t *Tectonic) Get(amount uint64) ([]TectonicTick, error) {
+func (t *Tectonic) Get(amount uint64) ([]Tick, error) {
 	// We use a buffer here to make it easier to maintain
 	var (
 		msgBuf  = bytes.Buffer{}
-		msgJSON = []TectonicTick{}
+		msgJSON = []Tick{}
 	)
 	msgBuf.WriteString("GET ")
 	msgBuf.WriteString(strconv.Itoa(int(amount)))
@@ -205,11 +203,11 @@ func (t *Tectonic) Get(amount uint64) ([]TectonicTick, error) {
 }
 
 // GetFrom : Returns items from specified store
-func (t *Tectonic) GetFrom(dbName string, amount uint64, asTick bool) ([]TectonicTick, error) {
+func (t *Tectonic) GetFrom(dbName string, amount uint64, asTick bool) ([]Tick, error) {
 	// We use a buffer here to make it easier to maintain
 	var (
 		msgBuf  = bytes.Buffer{}
-		msgJSON = []TectonicTick{}
+		msgJSON = []Tick{}
 	)
 	msgBuf.WriteString("GET ")
 	msgBuf.WriteString(strconv.Itoa(int(amount)))
@@ -223,14 +221,43 @@ func (t *Tectonic) GetFrom(dbName string, amount uint64, asTick bool) ([]Tectoni
 	return msgJSON, recvErr
 }
 
-// Insert : Inserts a tick into the database
-//func (t *Tectonic) Insert(tick TectonicTick) error {
-//
-//}
-//
-//func (t *Tectonic) InsertInto(dbName, tick TectonicTick) error {
-//
-//}
+// Insert : Inserts a single tick into the currently selected datastore
+func (t *Tectonic) Insert(tick Tick) error {
+	var (
+		isTrade = "f"
+		isBid   = "f"
+	)
+	if tick.IsTrade {
+		isTrade = "t"
+	}
+	if tick.IsBid {
+		isBid = "t"
+	}
+	tickString := fmt.Sprintf("%.3f, %d, %s, %s, %f, %f;", tick.Timestamp, tick.Seq, isTrade, isBid, tick.Price, tick.Size)
+
+	_, err := t.SendMessage("INSERT " + tickString)
+
+	return err
+}
+
+// InsertInto : Inserts a single tick into the datastore specified by `dbName`
+func (t *Tectonic) InsertInto(dbName string, tick Tick) error {
+	var (
+		isTrade = "f"
+		isBid   = "f"
+	)
+	if tick.IsTrade {
+		isTrade = "t"
+	}
+	if tick.IsBid {
+		isBid = "t"
+	}
+	tickString := fmt.Sprintf("%.3f, %d, %s, %s, %f, %f;", tick.Timestamp, tick.Seq, isTrade, isBid, tick.Price, tick.Size)
+
+	_, err := t.SendMessage("INSERT " + tickString + " INTO " + dbName)
+
+	return err
+}
 
 // Count : "Count of items in current store"
 func (t *Tectonic) Count() uint64 {
@@ -268,6 +295,7 @@ func (t *Tectonic) FlushAll() (string, error) {
 	return t.SendMessage("FLUSH ALL")
 }
 
+// TODO: Make these methods functional
 //func (t *Tectonic) Subscribe(dbName, message chan string) (string, error) {
 //
 //}
@@ -276,54 +304,39 @@ func (t *Tectonic) FlushAll() (string, error) {
 //
 //}
 
+// DeltaToTick : Converts single `orderbook.Delta` into `Tick`` format
+func DeltaToTick(delta orderbook.Delta) Tick {
+	return Tick{
+		Timestamp: float64(delta.Timestamp) * 1e-6,
+		Seq:       uint64(delta.Seq),
+		IsTrade:   (orderbook.IsTrade &^ delta.Event) == 0,
+		IsBid:     (orderbook.IsBid &^ delta.Event) == 0,
+		Price:     delta.Price,
+		Size:      delta.Size,
+	}
+}
+
+// DeltaBatchToTick : converts `[]orderbook.Delta` into `[]Tick`
+func DeltaBatchToTick(deltas []orderbook.Delta) []Tick {
+	tickBatch := make([]Tick, len(deltas))
+	for i, delta := range deltas {
+		tickBatch[i] = Tick{
+			Timestamp: float64(delta.Timestamp) * 1e-6,
+			Seq:       uint64(delta.Seq),
+			IsTrade:   (orderbook.IsTrade &^ delta.Event) == 0,
+			IsBid:     (orderbook.IsBid &^ delta.Event) == 0,
+			Price:     delta.Price,
+			Size:      delta.Size,
+		}
+	}
+
+	return tickBatch
+}
+
 // Exists : Checks if datastore exists
 func (t *Tectonic) Exists(dbName string) bool {
 	msg, _ := t.SendMessage("EXISTS " + dbName)
 
-	// EXISTS command returns `1` for an existing datastore, and `ERR:...` otherwise.
+	// EXISTS command returns `1` for an existing datastore, and `ERR:...` otherwise
 	return msg[0] == 1
-}
-
-// DEBUG: remove later
-func main() {
-	connection := DefaultTectonic
-
-	connErr := connection.Connect()
-
-	if connErr != nil {
-		fmt.Println(connErr)
-		return
-	}
-
-	connection.ClearAll()
-
-	if true {
-		err := connection.BulkAddInto("testing", []TectonicTick{
-			TectonicTick{Timestamp: 1505177059.684, Seq: 139010, IsTrade: true, IsBid: false, Price: 0.0703620, Size: 7.65064240},
-			TectonicTick{Timestamp: 1505177069.685, Seq: 139011, IsTrade: true, IsBid: false, Price: 0.0703620, Size: 7.65064240},
-			TectonicTick{Timestamp: 1505177079.685, Seq: 139012, IsTrade: true, IsBid: false, Price: 0.0703620, Size: 7.65064240},
-			TectonicTick{Timestamp: 1505177089.685, Seq: 139013, IsTrade: true, IsBid: false, Price: 0.0703620, Size: 7.65064240},
-			TectonicTick{Timestamp: 1505177099.685, Seq: 139014, IsTrade: true, IsBid: false, Price: 0.0703620, Size: 7.65064240},
-			TectonicTick{Timestamp: 1505177019.685, Seq: 139015, IsTrade: true, IsBid: false, Price: 0.0703620, Size: 7.65064240},
-			TectonicTick{Timestamp: 1505177029.685, Seq: 139016, IsTrade: true, IsBid: false, Price: 0.0703620, Size: 7.65064240},
-			TectonicTick{Timestamp: 1505177039.685, Seq: 139017, IsTrade: true, IsBid: false, Price: 0.0703620, Size: 7.65064240},
-			TectonicTick{Timestamp: 1505177049.685, Seq: 139018, IsTrade: true, IsBid: false, Price: 0.0703620, Size: 7.65064240},
-			TectonicTick{Timestamp: 1505177159.685, Seq: 139019, IsTrade: true, IsBid: false, Price: 0.0703620, Size: 7.65064240},
-			TectonicTick{Timestamp: 1505177259.685, Seq: 139020, IsTrade: true, IsBid: false, Price: 0.0703620, Size: 7.65064240},
-			TectonicTick{Timestamp: 1505177359.685, Seq: 139021, IsTrade: true, IsBid: false, Price: 0.0703620, Size: 7.65064240},
-			TectonicTick{Timestamp: 1505177459.685, Seq: 139022, IsTrade: true, IsBid: false, Price: 0.0703620, Size: 7.65064240},
-			TectonicTick{Timestamp: 1505177559.685, Seq: 139023, IsTrade: true, IsBid: false, Price: 0.0703620, Size: 7.65064240},
-			TectonicTick{Timestamp: 1505177659.685, Seq: 139024, IsTrade: true, IsBid: false, Price: 0.0703620, Size: 7.65064240},
-		})
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
-	}
-
-	_ = connection.Use("testing")
-
-	msg, _ := connection.Get(10)
-
-	fmt.Println(fmt.Sprintf("%f", msg[0].Timestamp))
 }

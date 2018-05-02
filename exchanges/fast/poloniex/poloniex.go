@@ -145,10 +145,31 @@ func (s *Settings) parseOrderbookSnapshots(symbols ...string) {
 		}
 		jsonMessage.UnmarshalJSON(byteMessage)
 
+		snapshot[i].Symbol = jsonMessage.CurrencyPair // TODO: Make it so that this string gets converted to a standardized format
 		snapshot[i].Timestamp = uint64(time.Now().UnixNano() / 1000)
-		snapshot[i].StartSeq = 0
-		snapshot[i].AskSide = jsonMessage.Orderbook[0]
-		snapshot[i].BidSide = jsonMessage.Orderbook[1]
+
+		// Run for loop to convert orderbook data into the desired format
+
+		var (
+		//orderbook = make(map[uint8]map[float64]float64, 2)
+		//askSide   = make(map[float64]float64, len(jsonMessage.Orderbook[0]))
+		//bidSide   = make(map[float64]float64, len(jsonMessage.Orderbook[1]))
+		)
+		for side, sideEntry := range jsonMessage.Orderbook {
+			switch side {
+			case 0: // Ask side
+				for _, askLevel := range sideEntry {
+					fmt.Println(askLevel, sideEntry[askLevel])
+				}
+			case 1: // Bid side
+				//for index, askEntry := range jsonMessage.Orderbook[0] {
+				//	for _, askLevel := range askEntry {
+				//		//levelSize, _ := strconv.ParseFloat(askEntry[askLevel], 64)
+				//	}
+				//}
+			}
+		}
+		//snapshot[i].BidSide = jsonMessage.Orderbook[1]
 	}
 }
 
@@ -159,19 +180,28 @@ func (s *Settings) ReceiveMessageLoop(output chan orderbook.Delta) {
 		totalLoops            int
 		smallestBracketLength = 1000
 		minimumLoops          = 50
+
+		seqCount = make(map[int64]uint64, len(s.symbols)) // Key seq by assetCode
 	)
 	for {
 		var (
 			tickBytes []byte
-			//assetCode uint16
+			assetCode int64
 		)
 		_, tickBytes, _ = s.conn.ReadMessage()
 
-		start := time.Now()
+		// Get the current asset code.
+		for index, char := range tickBytes {
+			if char == ',' {
+				assetCode, _ = strconv.ParseInt(string(tickBytes[1:index]), 10, 64)
+			}
+		}
 
 		tickPositions := make([]int, int(len(tickBytes)/20)) // This is a reasonable estimate of the amount of ticks encapsulated within the byte array
 		firstTickEncountered := false                        // Use this to signal whether we've encountered the first tick or not. For use in the loops below
 		tickIndex := 0                                       // To keep an index of the last location we've inserted
+
+		blockTimestamp := uint64(time.Now().UnixNano() / 1000)
 
 		if minimumLoops < totalLoops { // We might have more than 100 symbols on this connection. Let's make sure we all opinions before we continue ;)
 			// For efficiency purposes, we place the most access branch before the second one. This runs second!
@@ -217,11 +247,14 @@ func (s *Settings) ReceiveMessageLoop(output chan orderbook.Delta) {
 		// Loops over every bracket. For each bracket, parse all of the data
 		for char := 0; char < tickIndex; char++ {
 			var (
-				dataIndex = tickPositions[char] // Gets starting index of left square bracket `[`
-				side      uint8
-				price     float64
-				size      float64
-				action    uint8
+				tickDeltas = make([]orderbook.Delta, len(tickPositions))
+
+				dataIndex  = tickPositions[char] // Gets starting index of left square bracket `[`
+				deltaCount = 0
+				side       uint8
+				price      float64
+				size       float64
+				action     uint8
 			)
 
 			switch tickBytes[dataIndex+2] { // Update type. "o" is an update, and "t" is a trade event
@@ -239,7 +272,7 @@ func (s *Settings) ReceiveMessageLoop(output chan orderbook.Delta) {
 					if tickBytes[dotIndex] == '.' {
 						if priceEncountered { // Get everything from the size data iteration
 							// Parses `size` byte slice to a floating point number
-							size, _ = strconv.ParseFloat(string(tickBytes[dotIndex-sizeIters-1:dotIndex+9]), 64)
+							size, _ = strconv.ParseFloat(string(tickBytes[dotIndex-sizeIters-1:dotIndex+9]), 32)
 							action = side ^ orderbook.IsUpdate
 
 							if size == 0 {
@@ -247,13 +280,15 @@ func (s *Settings) ReceiveMessageLoop(output chan orderbook.Delta) {
 							}
 
 							//fmt.Println(string(tickBytes))
-							_ = orderbook.Delta{
-								TimeDelta: 0,
-								Seq:       0,
+							tickDeltas[deltaCount] = orderbook.Delta{
+								Timestamp: blockTimestamp,
+								Seq:       seqCount[assetCode],
 								Event:     action,
 								Price:     price,
 								Size:      size,
 							}
+							seqCount[assetCode]++
+							deltaCount++
 
 							break // Passes control back to the bracket iterator
 
@@ -261,7 +296,7 @@ func (s *Settings) ReceiveMessageLoop(output chan orderbook.Delta) {
 							// First entry we hit will contain price data
 							// This monster converts the price float enclosed within into a useable float64 value
 							priceEncountered = true
-							price, _ = strconv.ParseFloat(string(tickBytes[dataIndex+8:dotIndex+9]), 64)
+							price, _ = strconv.ParseFloat(string(tickBytes[dataIndex+8:dotIndex+9]), 32)
 							dotIndex += 12 // Adds the absolute minimum distance from the next '.'
 						}
 					} else if priceEncountered {
@@ -270,7 +305,8 @@ func (s *Settings) ReceiveMessageLoop(output chan orderbook.Delta) {
 				}
 
 			case 't':
-				var ( // Declare looping flow control variables
+				var (
+					// Declare looping flow control variables
 					sideGathered  bool
 					priceGathered bool
 					commaIndex    int
@@ -286,28 +322,27 @@ func (s *Settings) ReceiveMessageLoop(output chan orderbook.Delta) {
 
 					} else if sideGathered && tickBytes[dotIndex] == '.' {
 						if !priceGathered { // We should be getting to the price field by now
-							price, _ = strconv.ParseFloat(string(tickBytes[commaIndex:dotIndex+9]), 64)
+							price, _ = strconv.ParseFloat(string(tickBytes[commaIndex:dotIndex+9]), 32)
 							commaIndex = dotIndex + 13 // commaIndex gets set to the first possible number in the set
 							dotIndex += 12             // dotIndex becomes earliest possible '.' -- Set to one before '.' index because variable increments
 
 							priceGathered = true
 						} else {
-							size, _ = strconv.ParseFloat(string(tickBytes[commaIndex:dotIndex+9]), 64)
+							size, _ = strconv.ParseFloat(string(tickBytes[commaIndex:dotIndex+9]), 32)
 
-							_ = orderbook.Delta{
-								TimeDelta: 0,
-								Seq:       0,
+							tickDeltas[deltaCount] = orderbook.Delta{
+								Timestamp: blockTimestamp,
+								Seq:       seqCount[assetCode],
 								Event:     action,
 								Price:     price,
 								Size:      size,
 							}
-							break
+							seqCount[assetCode]++
+							break // Returns control to left bracket/tick iterator
 						}
 					}
 				}
 			}
 		}
-		end := time.Now()
-		fmt.Println(end.Sub(start))
 	}
 }
