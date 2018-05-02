@@ -5,11 +5,18 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+
+	"github.com/pquerna/ffjson/ffjson"
 )
 
-// TODO: Decide whether to load from JSON config file, or from environment variables
-
+// TectonicTick : Contains data that was loaded in from the datastore
 type TectonicTick struct {
+	Timestamp float64 `json:"ts"`
+	Seq       uint64  `json:"seq"`
+	IsTrade   bool    `json:"is_trade"`
+	IsBid     bool    `json:"is_bid"`
+	Price     float64 `json:"price"`
+	Size      float64 `json:"size"`
 }
 
 // Tectonic : Main type for single-instance connection to the Tectonic database
@@ -19,7 +26,7 @@ type Tectonic struct {
 	Port       uint16 // type ensures port selected is valid
 	Connection net.Conn
 
-	// TODO: Create authentication in TectonicDB project, then these will be functional
+	// TODO: Create authentication mechanisms in TectonicDB project, then these will be functional
 	Username string
 	Password string
 
@@ -30,30 +37,32 @@ type Tectonic struct {
 
 // TectonicDB function prototypes
 // ****************************
-// Help()										( string, error )
-// Ping()										( string, error )
-// Info()										( []string, error )
-// Perf()										( []string, error )
-// BulkAdd(ticks string)						error
-// BulkAddInto(dbName string) 					error
-// Use(dbName string) 							error
-// Create(dbName string) 						error
-// Get(amount int) 								( []string, error )
-// GetFrom(amount int, dbName string)			( []string, error )
-// Insert(tick string)							error
-// Count()										( uint64, error )
-// CountAll()									( uint64, error )
-// Clear()										error
-// ClearAll()									error
-// Flush()										error
-// FlushDoAll()									error
-// Subscribe(dbName, message chan string)		error
-// Unsubscribe()								error
-// Exists(dbName string)						( bool, error )
+// Help()										( string, error )		done
+// Ping()										( string, error )		done
+// Info()										( string, error )		done
+// Perf()										( string, error )		done
+// BulkAdd(ticks TTick)							error					done
+// BulkAddInto(dbName string, ticks TTick)		error					done
+// Use(dbName string) 							error					done
+// Create(dbName string) 						error					done
+// Get(amount int) 								( []TTick, error )		done
+// GetFrom(amount int, dbName string)			( []TTick, error )		done
+// Insert(t TTick)								error					incomplete
+// InsertInto(dbName string, t TTick)			error					incomplete
+// Count()										uint64					done
+// CountAll()									uint64					done
+// Clear()										error					done
+// ClearAll()									error					done
+// Flush()										error					done
+// FlushAll()									error					done
+// Subscribe(dbName, message chan string)		error					incomplete
+// Unsubscribe()								error					incomplete
+// Exists(dbName string)						bool					done
 //
 // Locally defined methods:
 // ****************************
 // Connect()									error
+// SendMessage()								( string, error )
 //
 // GetAsDelta(amount int)						( orderbook.DeltaBatch, error )
 // GetFromAsDelta(amount int, dbName string)	( orderbook.DeltaBatch, error )
@@ -74,40 +83,24 @@ var DefaultTectonic = Tectonic{
 // Connect : Connects Tectonic instance to the database. Run to initialize
 func (t *Tectonic) Connect() error {
 	var (
-		connectAddressBuf = bytes.Buffer{}
-		connectErr        error
+		connectAddress = fmt.Sprintf("%s:%d", t.Host, t.Port)
+		connectErr     error
 	)
 
-	// Create connection string via concatenation using buffer
-	connectAddressBuf.WriteString(t.Host)
-	connectAddressBuf.WriteByte(':')
-	connectAddressBuf.WriteString(strconv.Itoa(int(t.Port)))
-
-	t.Connection, connectErr = net.Dial("tcp", connectAddressBuf.String())
+	t.Connection, connectErr = net.Dial("tcp", connectAddress)
 
 	return connectErr
 }
 
 // SendMessage : Sends message to TectonicDB
 func (t *Tectonic) SendMessage(message string) (string, error) {
-	var (
-		messageBuf = bytes.Buffer{}
-		readBuf    = make([]byte, (1<<15)-1)
-	)
+	var readBuf = make([]byte, (1 << 15))
 
-	messageBuf.WriteString(message)
-	messageBuf.WriteString("\n")
-
-	_, _ = t.Connection.Write(messageBuf.Bytes())
+	_, _ = t.Connection.Write([]byte(message + "\n"))
 	_, readErr := t.Connection.Read(readBuf)
 
 	return string(readBuf), readErr
 }
-
-// SendBulkMessage : TODO
-//func (t *Tectonic) SendBulkMessage(messageHeader string, messages []string, messageTail string) error {
-//
-//}
 
 // Help : Return help string from Tectonic server
 func (t *Tectonic) Help() (string, error) {
@@ -130,11 +123,22 @@ func (t *Tectonic) Perf() (string, error) {
 }
 
 // BulkAdd : TODO
-func (t *Tectonic) BulkAdd(ticks []string) error {
+func (t *Tectonic) BulkAdd(ticks []TectonicTick) error {
 	_, _ = t.SendMessage("BULKADD")
 
 	for _, tick := range ticks {
-		_, _ = t.SendMessage(tick)
+		var (
+			isTrade = "f"
+			isBid   = "f"
+		)
+		if tick.IsTrade {
+			isTrade = "t"
+		}
+		if tick.IsBid {
+			isBid = "t"
+		}
+
+		_, _ = t.SendMessage(fmt.Sprintf("%.3f, %d, %s, %s, %f, %f;", tick.Timestamp, tick.Seq, isTrade, isBid, tick.Price, tick.Size))
 	}
 
 	_, recvErr := t.SendMessage("DDAKLUB")
@@ -143,15 +147,22 @@ func (t *Tectonic) BulkAdd(ticks []string) error {
 }
 
 // BulkAddInto : TODO
-func (t *Tectonic) BulkAddInto(dbName string, ticks []string) error {
-	msgBuf := bytes.Buffer{}
-	msgBuf.WriteString("BULKADD INTO ")
-	msgBuf.WriteString(dbName)
-
-	_, _ = t.SendMessage(msgBuf.String())
+func (t *Tectonic) BulkAddInto(dbName string, ticks []TectonicTick) error {
+	_, _ = t.SendMessage("BULKADD INTO " + dbName)
 
 	for _, tick := range ticks {
-		_, _ = t.SendMessage(tick)
+		var (
+			isTrade = "f"
+			isBid   = "f"
+		)
+		if tick.IsTrade {
+			isTrade = "t"
+		}
+		if tick.IsBid {
+			isBid = "t"
+		}
+
+		_, _ = t.SendMessage(fmt.Sprintf("%.3f, %d, %s, %s, %f, %f;", tick.Timestamp, tick.Seq, isTrade, isBid, tick.Price, tick.Size))
 	}
 
 	_, recvErr := t.SendMessage("DDAKLUB")
@@ -161,45 +172,117 @@ func (t *Tectonic) BulkAddInto(dbName string, ticks []string) error {
 
 // Use : "Switch the current store"
 func (t *Tectonic) Use(dbName string) error {
-	t.CurrentDB = dbName
+	_, readErr := t.SendMessage("USE " + dbName)
 
-	msgBuf := bytes.Buffer{}
+	if readErr == nil {
+		t.CurrentDB = dbName
+	}
 
-	msgBuf.WriteString("USE ")
-	msgBuf.WriteString(dbName)
-
-	_, readErr := t.SendMessage(msgBuf.String())
 	return readErr
 }
 
 // Create : "Create store"
 func (t *Tectonic) Create(dbName string) error {
-	msgBuf := bytes.Buffer{}
-
-	msgBuf.WriteString("CREATE ")
-	msgBuf.WriteString(dbName)
-
-	_, readErr := t.SendMessage(msgBuf.String())
+	_, readErr := t.SendMessage("CREATE " + dbName)
 	return readErr
 }
 
 // Get : "Returns `amount` items from current store"
-//func (t *Tectonic) Get(amount uint64) ([]string, error) {
+func (t *Tectonic) Get(amount uint64) ([]TectonicTick, error) {
+	// We use a buffer here to make it easier to maintain
+	var (
+		msgBuf  = bytes.Buffer{}
+		msgJSON = []TectonicTick{}
+	)
+	msgBuf.WriteString("GET ")
+	msgBuf.WriteString(strconv.Itoa(int(amount)))
+	msgBuf.WriteString(" AS JSON")
+
+	msgRecv, recvErr := t.SendMessage(msgBuf.String())
+	ffjson.Unmarshal(bytes.Trim([]byte(msgRecv[9:]), "\x00"), &msgJSON) // We get back a message starting with `\uFFFE` - Trim that and all null chars in array
+
+	return msgJSON, recvErr
+}
+
+// GetFrom : Returns items from specified store
+func (t *Tectonic) GetFrom(dbName string, amount uint64, asTick bool) ([]TectonicTick, error) {
+	// We use a buffer here to make it easier to maintain
+	var (
+		msgBuf  = bytes.Buffer{}
+		msgJSON = []TectonicTick{}
+	)
+	msgBuf.WriteString("GET ")
+	msgBuf.WriteString(strconv.Itoa(int(amount)))
+	msgBuf.WriteString(" FROM ")
+	msgBuf.WriteString(dbName)
+	msgBuf.WriteString(" AS JSON")
+
+	msgRecv, recvErr := t.SendMessage(msgBuf.String())
+	ffjson.Unmarshal(bytes.Trim([]byte(msgRecv[9:]), "\x00"), &msgJSON) // We get back a message starting with `\uFFFE` - Trim that and all null chars in array
+
+	return msgJSON, recvErr
+}
+
+// Insert : Inserts a tick into the database
+//func (t *Tectonic) Insert(tick TectonicTick) error {
+//
+//}
+//
+//func (t *Tectonic) InsertInto(dbName, tick TectonicTick) error {
 //
 //}
 
-//func (t *Tectonic) GetAsDelta() (string, error)     {}
-//func (t *Tectonic) GetFrom() (string, error)        {}
-//func (t *Tectonic) GetFromAsDelta() (string, error) {}
-//func (t *Tectonic) Count() (string, error)          {}
-//func (t *Tectonic) CountAll() (string, error)       {}
-//func (t *Tectonic) Clear() (string, error)          {}
-//func (t *Tectonic) ClearAll() (string, error)       {}
-//func (t *Tectonic) Flush() (string, error)          {}
-//func (t *Tectonic) FlushDoAll() (string, error)     {}
-//func (t *Tectonic) Subscribe() (string, error)      {}
-//func (t *Tectonic) Unsubscribe() (string, error)    {}
-//func (t *Tectonic) Exists() (string, error)         {}
+// Count : "Count of items in current store"
+func (t *Tectonic) Count() uint64 {
+	msg, _ := t.SendMessage("COUNT")
+	count, _ := strconv.Atoi(msg)
+
+	return uint64(count)
+}
+
+// CountAll : "Returns total count from all stores"
+func (t *Tectonic) CountAll() uint64 {
+	msg, _ := t.SendMessage("COUNT ALL")
+	count, _ := strconv.Atoi(msg)
+
+	return uint64(count)
+}
+
+// Clear : Deletes everything in current store (BE CAREFUL WITH THIS METHOD)
+func (t *Tectonic) Clear() (string, error) {
+	return t.SendMessage("CLEAR")
+}
+
+// ClearAll : "Drops everything in memory"
+func (t *Tectonic) ClearAll() (string, error) {
+	return t.SendMessage("CLEAR ALL")
+}
+
+// Flush : "Flush current store to disk"
+func (t *Tectonic) Flush() (string, error) {
+	return t.SendMessage("FLUSH")
+}
+
+// FlushAll : "Flush everything form memory to disk"
+func (t *Tectonic) FlushAll() (string, error) {
+	return t.SendMessage("FLUSH ALL")
+}
+
+//func (t *Tectonic) Subscribe(dbName, message chan string) (string, error) {
+//
+//}
+//
+//func (t *Tectonic) Unsubscribe() (string, error)    {
+//
+//}
+
+// Exists : Checks if datastore exists
+func (t *Tectonic) Exists(dbName string) bool {
+	msg, _ := t.SendMessage("EXISTS " + dbName)
+
+	// EXISTS command returns `1` for an existing datastore, and `ERR:...` otherwise.
+	return msg[0] == 1
+}
 
 // DEBUG: remove later
 func main() {
@@ -211,11 +294,36 @@ func main() {
 		fmt.Println(connErr)
 		return
 	}
-	msg, err := connection.Info()
 
-	if err != nil {
-		fmt.Println(err)
-		return
+	connection.ClearAll()
+
+	if true {
+		err := connection.BulkAddInto("testing", []TectonicTick{
+			TectonicTick{Timestamp: 1505177059.684, Seq: 139010, IsTrade: true, IsBid: false, Price: 0.0703620, Size: 7.65064240},
+			TectonicTick{Timestamp: 1505177069.685, Seq: 139011, IsTrade: true, IsBid: false, Price: 0.0703620, Size: 7.65064240},
+			TectonicTick{Timestamp: 1505177079.685, Seq: 139012, IsTrade: true, IsBid: false, Price: 0.0703620, Size: 7.65064240},
+			TectonicTick{Timestamp: 1505177089.685, Seq: 139013, IsTrade: true, IsBid: false, Price: 0.0703620, Size: 7.65064240},
+			TectonicTick{Timestamp: 1505177099.685, Seq: 139014, IsTrade: true, IsBid: false, Price: 0.0703620, Size: 7.65064240},
+			TectonicTick{Timestamp: 1505177019.685, Seq: 139015, IsTrade: true, IsBid: false, Price: 0.0703620, Size: 7.65064240},
+			TectonicTick{Timestamp: 1505177029.685, Seq: 139016, IsTrade: true, IsBid: false, Price: 0.0703620, Size: 7.65064240},
+			TectonicTick{Timestamp: 1505177039.685, Seq: 139017, IsTrade: true, IsBid: false, Price: 0.0703620, Size: 7.65064240},
+			TectonicTick{Timestamp: 1505177049.685, Seq: 139018, IsTrade: true, IsBid: false, Price: 0.0703620, Size: 7.65064240},
+			TectonicTick{Timestamp: 1505177159.685, Seq: 139019, IsTrade: true, IsBid: false, Price: 0.0703620, Size: 7.65064240},
+			TectonicTick{Timestamp: 1505177259.685, Seq: 139020, IsTrade: true, IsBid: false, Price: 0.0703620, Size: 7.65064240},
+			TectonicTick{Timestamp: 1505177359.685, Seq: 139021, IsTrade: true, IsBid: false, Price: 0.0703620, Size: 7.65064240},
+			TectonicTick{Timestamp: 1505177459.685, Seq: 139022, IsTrade: true, IsBid: false, Price: 0.0703620, Size: 7.65064240},
+			TectonicTick{Timestamp: 1505177559.685, Seq: 139023, IsTrade: true, IsBid: false, Price: 0.0703620, Size: 7.65064240},
+			TectonicTick{Timestamp: 1505177659.685, Seq: 139024, IsTrade: true, IsBid: false, Price: 0.0703620, Size: 7.65064240},
+		})
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
 	}
-	fmt.Println(msg)
+
+	_ = connection.Use("testing")
+
+	msg, _ := connection.Get(10)
+
+	fmt.Println(fmt.Sprintf("%f", msg[0].Timestamp))
 }
