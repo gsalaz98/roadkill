@@ -16,7 +16,7 @@ func main() {
 		//{"XBTUSD", "ETHM18", "XBT7D_U110", "BTC_ETH", "BTC_XMR", "BTC_ETC", "USDT_BTC", "USDT_ETH"}
 	)
 	exchangeSymbols["bitmex"] = []string{"XBTUSD", "ETHM18", "XBT7D_U110"}
-	exchangeSymbols["poloniex"] = []string{"BTC_ETH"} //, "BTC_XMR", "BTC_ETC", "USDT_BTC", "USDT_ETH"}
+	exchangeSymbols["poloniex"] = []string{"BTC_ETH", "BTC_XMR", "BTC_ETC", "USDT_BTC", "USDT_ETH"}
 
 	tErr := tConn.Connect()
 
