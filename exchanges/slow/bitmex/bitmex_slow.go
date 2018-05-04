@@ -10,7 +10,6 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/pquerna/ffjson/ffjson"
 	"gitlab.com/CuteQ/roadkill/orderbook"
-	"gitlab.com/CuteQ/roadkill/orderbook/tectonic"
 )
 
 // Settings : Structure is used to load settings into the application.
@@ -175,34 +174,24 @@ func (s *Settings) Initialize(symbols ...string) {
 
 // ReceiveMessageLoop : This runs infinitely until the connection is closed by the user or server.
 // It is recommended that you call this method concurrently.
-func (s *Settings) ReceiveMessageLoop(output *chan orderbook.Delta) {
+func (s *Settings) ReceiveMessageLoop(output *chan orderbook.DeltaBatch) {
 	var (
-		liquidationTableName = "liquidation"
-		orderbookTableName   = s.ChannelType[0]
-		tradeTableName       = "trade"
+		//liquidationTableName = "liquidation" // we may want to define this in `alternative` or something, I don't know yet.
+		orderbookTableName = s.ChannelType[0]
+		tradeTableName     = "trade"
 
 		partialAction = "partial"
-		//updateAction  = "update" // These aren't used, but perhaps they will one day. Leave them here for legacy support.
-		//insertAction  = "insert" // These aren't used, but perhaps they will one day. Leave them here for legacy support.
-		//removeAction  = "delete" // These aren't used, but perhaps they will one day. Leave them here for legacy support.
 
 		snapshots = make(map[string][][]orderbook.Delta, len(s.symbols))
 
 		noPartialTicks   int
 		incrementPartial = true
 
-		// Maps for faster and more convienient data access (avoids code redundancy)
-		actionMap = map[string]uint8{
-			"update": orderbook.IsUpdate,
-			"delete": orderbook.IsRemove,
-			"insert": orderbook.IsInsert,
-		}
 		sideMap = map[string]uint8{
 			"Buy":  orderbook.IsBid,
 			"Sell": orderbook.IsAsk,
 		}
 		seqCount = make(map[string]uint64, len(s.symbols))
-		tectConn = tectonic.DefaultTectonic
 	)
 
 	// Let's construct the slices to be contained within snapshots
@@ -216,18 +205,6 @@ func (s *Settings) ReceiveMessageLoop(output *chan orderbook.Delta) {
 		_, _, _ = s.conn.ReadMessage()
 	}
 
-	tectConnErr := tectConn.Connect()
-
-	if tectConnErr != nil {
-		panic(tectConnErr)
-	}
-
-	for _, symbol := range s.symbols {
-		if !tectConn.Exists("bitmex:" + symbol) {
-			_ = tectConn.Create("bitmex:" + symbol)
-		}
-	}
-
 	// We will be parsing all of our data from the byte array for performance purposes
 	for {
 		// Initialize variables we need. Some of these return errors, but we won't do anything with them, we just need to call the method.
@@ -235,48 +212,47 @@ func (s *Settings) ReceiveMessageLoop(output *chan orderbook.Delta) {
 			_, tickBytes, _ = s.conn.ReadMessage()
 			tick            = orderbook.IBitMexTick{}
 			_               = tick.UnmarshalJSON(tickBytes)
-			deltas          = make([]orderbook.Delta, len(tick.Data))
+			deltas          = make(map[string][]orderbook.Delta, len(s.symbols)) // Use this structure instead of list of deltas because sometimes BitMEX returns two different symbol's data in the same message
+			deltaCount      = make(map[string]int, len(tick.Data))
 		)
 
 		if tick.Action == "" {
 			continue
 		}
 
-		// Orderbook events. Just to make sure we don't pick up a liquidation event or anything of the sorts. We mustn't make too many assumptions
-		// We mustn't make too many assumptions about the user's behavior.
+		blockTimestamp := float64(time.Now().UnixNano()/1000) * 1e-6
 
+		// Orderbook events. Just to make sure we don't pick up a liquidation event or anything of the sorts.
 		if tick.Table == orderbookTableName {
-			var blockTimestamp = time.Now().UnixNano() / 1000
-
 			// We check that the frame sent is a partial (fragmented section of orderbook) and that we haven't looped it over 50 times
 			for _, update := range tick.Data {
-				/*deltas[i] = orderbook.Delta{
-				//	Timestamp: uint64(blockTimestamp),
-				//	Seq:       seqCount[update.Symbol],
-				//	Event:     sideMap[update.Side] ^ actionMap[tick.Action],
-				//	Price:     ((1.0e+8 * s.assetInfo[update.Symbol]["index"]) - float64(update.ID)) * s.assetInfo[update.Symbol]["tickSize"],
-				//	Size:      float64(update.Size), // It's worth noting that if this is a delete event, there won't be problems with a missing field.
-				//}
-				*/
-				tectConn.InsertInto("bitmex:"+update.Symbol, tectonic.Tick{
-					Timestamp: float64(blockTimestamp) * 1e-6,
+
+				if deltas[update.Symbol] == nil {
+					deltas[update.Symbol] = make([]orderbook.Delta, len(tick.Data))
+					deltaCount[update.Symbol] = 0
+				}
+
+				deltas[update.Symbol][deltaCount[update.Symbol]] = orderbook.Delta{
+					Timestamp: blockTimestamp,
 					Seq:       uint64(seqCount[update.Symbol]),
 					IsTrade:   false,
 					IsBid:     orderbook.IsBid == sideMap[update.Side],
 					Price:     ((1.0e+8 * s.assetInfo[update.Symbol]["index"]) - float64(update.ID)) * s.assetInfo[update.Symbol]["tickSize"],
 					Size:      float64(update.Size),
-				})
+				}
 				seqCount[update.Symbol]++
+				deltaCount[update.Symbol]++
 			}
 
+			// TODO: Is this really the best way to handle the situation? Maybe we can just move it into its own section. Ponder on this...
 			// We check that the frame sent is a partial (fragmented section of orderbook) and that we haven't looped it over 50 times
 			if incrementPartial {
 				if tick.Action == partialAction {
-					symbol := tick.Data[0].Symbol
+					//symbol := tick.Data[0].Symbol
 					noPartialTicks = 0
 
 					// Adds partial data to the list of snapshots belonging to the 'symbol'
-					snapshots[symbol] = append(snapshots[symbol], deltas)
+					//snapshots[symbol] = append(snapshots[symbol], deltas)
 
 					continue
 				}
@@ -286,21 +262,44 @@ func (s *Settings) ReceiveMessageLoop(output *chan orderbook.Delta) {
 				}
 				noPartialTicks++ // we have this increment at the end of the loop so that we can keep count and know when to stop checking for partials
 			}
-		} else if tick.Table == tradeTableName {
-			var blockTimestamp = time.Now().UnixNano() / 1000
 
+			// After we've cleared all of the tests to make sure we're not processing `partial` events, let's send back the data we've gathered into the `output` channel.
+			for symbol, tickDeltas := range deltas {
+				*output <- orderbook.DeltaBatch{
+					Exchange: "bitmex",
+					Symbol:   symbol,
+					Deltas:   tickDeltas,
+				}
+			}
+
+		} else if tick.Table == tradeTableName {
 			for _, trade := range tick.Data {
-				tectConn.InsertInto("bitmex:"+trade.Symbol, tectonic.Tick{
-					Timestamp: float64(blockTimestamp) * 1e-6,
+				if deltas[trade.Symbol] == nil {
+					deltas[trade.Symbol] = make([]orderbook.Delta, len(tick.Data))
+					deltaCount[trade.Symbol] = 0
+				}
+
+				deltas[trade.Symbol][deltaCount[trade.Symbol]] = orderbook.Delta{
+					Timestamp: blockTimestamp,
 					Seq:       uint64(seqCount[trade.Symbol]),
 					IsTrade:   true,
 					IsBid:     orderbook.IsBid == sideMap[trade.Side],
 					Price:     float64(trade.Price),
 					Size:      float64(trade.Size),
-				})
+				}
+
 				seqCount[trade.Symbol]++
+				deltaCount[trade.Symbol]++
 			}
-		} else if tick.Table == liquidationTableName {
+			// After we're done looping, send back the trade ticks as a `DeltaBatch` type
+			for symbol, tickDeltas := range deltas {
+				*output <- orderbook.DeltaBatch{
+					Exchange: "bitmex",
+					Symbol:   symbol,
+					Deltas:   tickDeltas,
+				}
+			}
 		}
+		// TODO: Decide how to handle liquidation events. Perhaps do this in `alternative`?
 	}
 }

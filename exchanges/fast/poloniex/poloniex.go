@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"time"
 
+	"gitlab.com/CuteQ/roadkill/orderbook/tectonic"
+
 	"github.com/gorilla/websocket"
 	"github.com/pquerna/ffjson/ffjson"
 	"gitlab.com/CuteQ/roadkill/orderbook"
@@ -55,7 +57,7 @@ func (s *Settings) SendMessages(messages []map[string]string) {
 // Settings struct based off a list of assets passed as variadic string parameters
 func (s *Settings) SubscribeWizard(symbols ...string) {
 	s.messages = make([]map[string]string, len(symbols))
-	s.symbols = symbols
+	s.symbols = symbols[:]
 
 	for _, asset := range symbols {
 		s.messages = append(s.messages, map[string]string{
@@ -106,7 +108,7 @@ func (s *Settings) getAssetCodes() {
 
 	for assetPair, data := range jsonData.(map[string]interface{}) {
 		assetID := data.(map[string]interface{})["id"].(float64)
-		s.assetTable[assetID] = assetPair
+		s.assetTable[float64(assetID)] = assetPair
 	}
 }
 
@@ -149,44 +151,62 @@ func (s *Settings) parseOrderbookSnapshots(symbols ...string) {
 		snapshot[i].Timestamp = uint64(time.Now().UnixNano() / 1000)
 
 		// Run for loop to convert orderbook data into the desired format
-
+		// TODO: Work on snapshots
 		var (
 		//orderbook = make(map[uint8]map[float64]float64, 2)
 		//askSide   = make(map[float64]float64, len(jsonMessage.Orderbook[0]))
 		//bidSide   = make(map[float64]float64, len(jsonMessage.Orderbook[1]))
 		)
-		for side, sideEntry := range jsonMessage.Orderbook {
-			switch side {
-			case 0: // Ask side
-				for _, askLevel := range sideEntry {
-					fmt.Println(askLevel, sideEntry[askLevel])
-				}
-			case 1: // Bid side
-				//for index, askEntry := range jsonMessage.Orderbook[0] {
-				//	for _, askLevel := range askEntry {
-				//		//levelSize, _ := strconv.ParseFloat(askEntry[askLevel], 64)
-				//	}
-				//}
-			}
-		}
+		//for side, sideEntry := range jsonMessage.Orderbook {
+		//	switch side {
+		//	case 0: // Ask side
+		//		for _, askLevel := range sideEntry {
+		//			fmt.Println(askLevel, sideEntry[askLevel])
+		//		}
+		//	case 1: // Bid side
+		//		//for index, askEntry := range jsonMessage.Orderbook[0] {
+		//		//	for _, askLevel := range askEntry {
+		//		//		//levelSize, _ := strconv.ParseFloat(askEntry[askLevel], 64)
+		//		//	}
+		//		//}
+		//	}
+		//}
 		//snapshot[i].BidSide = jsonMessage.Orderbook[1]
 	}
 }
 
 // ReceiveMessageLoop : This runs infinitely until the connection is closed by the user or server.
 // It is recommended that you call this method concurrently.
-func (s *Settings) ReceiveMessageLoop(output chan orderbook.Delta) {
+func (s *Settings) ReceiveMessageLoop(output *chan orderbook.DeltaBatch) {
 	var (
 		totalLoops            int
 		smallestBracketLength = 1000
 		minimumLoops          = 50
 
 		seqCount = make(map[int64]uint64, len(s.symbols)) // Key seq by assetCode
+		tectConn = tectonic.DefaultTectonic
 	)
+	err := tectConn.Connect()
+
+	if err != nil {
+		panic(err)
+	}
+
+	for _, symbol := range s.symbols {
+		dbName := fmt.Sprintf("poloniex:%s", symbol)
+		if tectConn.Exists(dbName) {
+			continue
+		}
+		tectConn.Create("poloniex:" + symbol)
+	}
+
 	for {
 		var (
-			tickBytes []byte
-			assetCode int64
+			tickBytes []byte // We store websocket frames here temporarily to parse the information contained within
+			assetCode int64  // Asset code is a string that corresponds to a certain asset-pair on the poloniex exchange. Use this to access that information.
+
+			firstTickEncountered bool // Use this to signal whether we've encountered the first tick or not. For use in the loops below
+			tickIndex            int  // To keep an index of the last location we've inserted
 		)
 		_, tickBytes, _ = s.conn.ReadMessage()
 
@@ -194,14 +214,12 @@ func (s *Settings) ReceiveMessageLoop(output chan orderbook.Delta) {
 		for index, char := range tickBytes {
 			if char == ',' {
 				assetCode, _ = strconv.ParseInt(string(tickBytes[1:index]), 10, 64)
+				break
 			}
 		}
 
+		// Create an array to index the start of every single piece of data we get
 		tickPositions := make([]int, int(len(tickBytes)/20)) // This is a reasonable estimate of the amount of ticks encapsulated within the byte array
-		firstTickEncountered := false                        // Use this to signal whether we've encountered the first tick or not. For use in the loops below
-		tickIndex := 0                                       // To keep an index of the last location we've inserted
-
-		blockTimestamp := uint64(time.Now().UnixNano() / 1000)
 
 		if minimumLoops < totalLoops { // We might have more than 100 symbols on this connection. Let's make sure we all opinions before we continue ;)
 			// For efficiency purposes, we place the most access branch before the second one. This runs second!
@@ -244,17 +262,20 @@ func (s *Settings) ReceiveMessageLoop(output chan orderbook.Delta) {
 				}
 			}
 		}
-		// Loops over every bracket. For each bracket, parse all of the data
+		var (
+			blockTimestamp = float64(time.Now().UnixNano()/1000) * 1e-6  // Format the timestamp to be inline with what TectonicDB wants
+			deltas         = make([]orderbook.Delta, len(tickPositions)) // We will return this data to the `output` channel as type `DeltaBatch`
+		)
+		// Loops over every bracket. For each bracket, parse all of the data.
+		// All of the parsing of data from the exchange happens here.
+		// We construct deltas of each event and send them back to the `output` channel.
 		for char := 0; char < tickIndex; char++ {
 			var (
-				tickDeltas = make([]orderbook.Delta, len(tickPositions))
-
 				dataIndex  = tickPositions[char] // Gets starting index of left square bracket `[`
-				deltaCount = 0
+				deltaCount int
 				side       uint8
 				price      float64
 				size       float64
-				action     uint8
 			)
 
 			switch tickBytes[dataIndex+2] { // Update type. "o" is an update, and "t" is a trade event
@@ -273,20 +294,16 @@ func (s *Settings) ReceiveMessageLoop(output chan orderbook.Delta) {
 						if priceEncountered { // Get everything from the size data iteration
 							// Parses `size` byte slice to a floating point number
 							size, _ = strconv.ParseFloat(string(tickBytes[dotIndex-sizeIters-1:dotIndex+9]), 32)
-							action = side ^ orderbook.IsUpdate
 
-							if size == 0 {
-								action = side ^ orderbook.IsRemove
-							}
-
-							//fmt.Println(string(tickBytes))
-							tickDeltas[deltaCount] = orderbook.Delta{
+							deltas[deltaCount] = orderbook.Delta{
 								Timestamp: blockTimestamp,
 								Seq:       seqCount[assetCode],
-								Event:     action,
-								Price:     price,
-								Size:      size,
+								IsTrade:   false,
+								IsBid:     side == orderbook.IsBid,
+								Price:     float64(price),
+								Size:      float64(size),
 							}
+
 							seqCount[assetCode]++
 							deltaCount++
 
@@ -296,7 +313,7 @@ func (s *Settings) ReceiveMessageLoop(output chan orderbook.Delta) {
 							// First entry we hit will contain price data
 							// This monster converts the price float enclosed within into a useable float64 value
 							priceEncountered = true
-							price, _ = strconv.ParseFloat(string(tickBytes[dataIndex+8:dotIndex+9]), 32)
+							price, _ = strconv.ParseFloat(string(tickBytes[dataIndex+8:dotIndex+9]), 64)
 							dotIndex += 12 // Adds the absolute minimum distance from the next '.'
 						}
 					} else if priceEncountered {
@@ -314,7 +331,6 @@ func (s *Settings) ReceiveMessageLoop(output chan orderbook.Delta) {
 				for dotIndex := dataIndex + 5; ; dotIndex++ {
 					if !sideGathered && tickBytes[dotIndex] == ',' {
 						side = (1 + tickBytes[dotIndex+1]) << 4 // Increment side and make it equal to either orderbook.(IsBid || IsAsk)
-						action = side ^ orderbook.IsTrade
 
 						commaIndex = dotIndex + 4 // Set first comma equal to the start of the price
 						sideGathered = true       //
@@ -322,7 +338,7 @@ func (s *Settings) ReceiveMessageLoop(output chan orderbook.Delta) {
 
 					} else if sideGathered && tickBytes[dotIndex] == '.' {
 						if !priceGathered { // We should be getting to the price field by now
-							price, _ = strconv.ParseFloat(string(tickBytes[commaIndex:dotIndex+9]), 32)
+							price, _ = strconv.ParseFloat(string(tickBytes[commaIndex:dotIndex+9]), 64)
 							commaIndex = dotIndex + 13 // commaIndex gets set to the first possible number in the set
 							dotIndex += 12             // dotIndex becomes earliest possible '.' -- Set to one before '.' index because variable increments
 
@@ -330,19 +346,27 @@ func (s *Settings) ReceiveMessageLoop(output chan orderbook.Delta) {
 						} else {
 							size, _ = strconv.ParseFloat(string(tickBytes[commaIndex:dotIndex+9]), 32)
 
-							tickDeltas[deltaCount] = orderbook.Delta{
+							deltas[deltaCount] = orderbook.Delta{
 								Timestamp: blockTimestamp,
 								Seq:       seqCount[assetCode],
-								Event:     action,
-								Price:     price,
-								Size:      size,
+								IsTrade:   true,
+								IsBid:     side == orderbook.IsBid,
+								Price:     float64(price),
+								Size:      float64(size),
 							}
 							seqCount[assetCode]++
+							deltaCount++
 							break // Returns control to left bracket/tick iterator
 						}
 					}
 				}
 			}
+		}
+		// After we've finished parsing the tick, let's return a `DeltaBatch` to the `output` channel.
+		*output <- orderbook.DeltaBatch{
+			Exchange: "poloniex",
+			Symbol:   s.assetTable[float64(assetCode)],
+			Deltas:   deltas,
 		}
 	}
 }

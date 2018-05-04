@@ -12,9 +12,19 @@ const (
 	IsInsert uint8 = 1 << 0 // Some exchanges choose to transmit an insert event. Let's have it here for good measure.
 )
 
-// Delta : This stores orderbook tick deltas used to reconstruct the orderbook.
-// It is constructed in a way to save as much space in storage per tick.
+// Delta : Same format as `tectonic.Tick` - should make our lives much easier in the long run
 type Delta struct {
+	Timestamp float64 `json:"ts"`
+	Seq       uint64  `json:"seq"`
+	IsTrade   bool    `json:"is_trade"`
+	IsBid     bool    `json:"is_bid"`
+	Price     float64 `json:"price"`
+	Size      float64 `json:"size"`
+}
+
+// LegacyDelta : This stores orderbook tick deltas used to reconstruct the orderbook.
+// It is constructed in a way to save as much space in storage per tick.
+type LegacyDelta struct {
 	Timestamp uint64  `json:"d"`
 	Seq       uint64  `json:"s"`
 	Event     uint8   `json:"e"`
@@ -49,12 +59,9 @@ type ITickMessage []interface{}
 // NormalizedSymbol : Lookup in the database the equivalent name for a given market and asset.
 // e.g., In BitMEX, Bitcoin is represented as `XBT`, whereas in most other exchanges,
 // it's abbreviated `BTC`. Changes like these must be accounted for
+func NormalizedSymbol(exchange, symbol string) {} // TODO: work on this
 
-// InsertSnapshot :
-func (snapshot *Snapshot) InsertSnapshot() {}
-
-// InsertTick : Insert a single tick to some database
-func (delta *Delta) InsertTick() {}
-
-// InsertTicks : Insert multiple ticks into a database
-func InsertTicks(ticks []Delta) {}
+// TODO LIST:
+//
+// Futures date generator/parser
+// Options data capturing from Deribit

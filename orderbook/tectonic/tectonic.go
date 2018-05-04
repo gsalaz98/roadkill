@@ -10,16 +10,6 @@ import (
 	"gitlab.com/CuteQ/roadkill/orderbook"
 )
 
-// Tick : Contains data that was loaded in from the datastore
-type Tick struct {
-	Timestamp float64 `json:"ts"`
-	Seq       uint64  `json:"seq"`
-	IsTrade   bool    `json:"is_trade"`
-	IsBid     bool    `json:"is_bid"`
-	Price     float64 `json:"price"`
-	Size      float64 `json:"size"`
-}
-
 // Tectonic : Main type for single-instance connection to the Tectonic database
 type Tectonic struct {
 	// Connection settings
@@ -69,8 +59,8 @@ type Tectonic struct {
 // DeltaBatchToTick(deltas []orderbook.Delta)	[]Tick			done
 // ****************************
 
-// TectonicPool : TODO
-type TectonicPool struct{}
+// Pool : TODO
+type Pool struct{}
 
 // DefaultTectonic : Default settings for Tectonic structure
 var DefaultTectonic = Tectonic{
@@ -121,7 +111,7 @@ func (t *Tectonic) Perf() (string, error) {
 }
 
 // BulkAdd : TODO
-func (t *Tectonic) BulkAdd(ticks []Tick) error {
+func (t *Tectonic) BulkAdd(ticks []orderbook.Delta) error {
 	_, _ = t.SendMessage("BULKADD")
 
 	for _, tick := range ticks {
@@ -145,7 +135,7 @@ func (t *Tectonic) BulkAdd(ticks []Tick) error {
 }
 
 // BulkAddInto : TODO
-func (t *Tectonic) BulkAddInto(dbName string, ticks []Tick) error {
+func (t *Tectonic) BulkAddInto(dbName string, ticks []orderbook.Delta) error {
 	_, _ = t.SendMessage("BULKADD INTO " + dbName)
 
 	for _, tick := range ticks {
@@ -186,11 +176,11 @@ func (t *Tectonic) Create(dbName string) error {
 }
 
 // Get : "Returns `amount` items from current store"
-func (t *Tectonic) Get(amount uint64) ([]Tick, error) {
+func (t *Tectonic) Get(amount uint64) ([]orderbook.Delta, error) {
 	// We use a buffer here to make it easier to maintain
 	var (
 		msgBuf  = bytes.Buffer{}
-		msgJSON = []Tick{}
+		msgJSON = []orderbook.Delta{}
 	)
 	msgBuf.WriteString("GET ")
 	msgBuf.WriteString(strconv.Itoa(int(amount)))
@@ -203,11 +193,11 @@ func (t *Tectonic) Get(amount uint64) ([]Tick, error) {
 }
 
 // GetFrom : Returns items from specified store
-func (t *Tectonic) GetFrom(dbName string, amount uint64, asTick bool) ([]Tick, error) {
+func (t *Tectonic) GetFrom(dbName string, amount uint64, asTick bool) ([]orderbook.Delta, error) {
 	// We use a buffer here to make it easier to maintain
 	var (
 		msgBuf  = bytes.Buffer{}
-		msgJSON = []Tick{}
+		msgJSON = []orderbook.Delta{}
 	)
 	msgBuf.WriteString("GET ")
 	msgBuf.WriteString(strconv.Itoa(int(amount)))
@@ -222,7 +212,7 @@ func (t *Tectonic) GetFrom(dbName string, amount uint64, asTick bool) ([]Tick, e
 }
 
 // Insert : Inserts a single tick into the currently selected datastore
-func (t *Tectonic) Insert(tick Tick) error {
+func (t *Tectonic) Insert(tick orderbook.Delta) error {
 	var (
 		isTrade = "f"
 		isBid   = "f"
@@ -241,7 +231,7 @@ func (t *Tectonic) Insert(tick Tick) error {
 }
 
 // InsertInto : Inserts a single tick into the datastore specified by `dbName`
-func (t *Tectonic) InsertInto(dbName string, tick Tick) error {
+func (t *Tectonic) InsertInto(dbName string, tick orderbook.Delta) error {
 	var (
 		isTrade = "f"
 		isBid   = "f"
@@ -303,35 +293,6 @@ func (t *Tectonic) FlushAll() (string, error) {
 //func (t *Tectonic) Unsubscribe() (string, error)    {
 //
 //}
-
-// DeltaToTick : Converts single `orderbook.Delta` into `Tick`` format
-func DeltaToTick(delta orderbook.Delta) Tick {
-	return Tick{
-		Timestamp: float64(delta.Timestamp) * 1e-6,
-		Seq:       uint64(delta.Seq),
-		IsTrade:   (orderbook.IsTrade &^ delta.Event) == 0,
-		IsBid:     (orderbook.IsBid &^ delta.Event) == 0,
-		Price:     delta.Price,
-		Size:      delta.Size,
-	}
-}
-
-// DeltaBatchToTick : converts `[]orderbook.Delta` into `[]Tick`
-func DeltaBatchToTick(deltas []orderbook.Delta) []Tick {
-	tickBatch := make([]Tick, len(deltas))
-	for i, delta := range deltas {
-		tickBatch[i] = Tick{
-			Timestamp: float64(delta.Timestamp) * 1e-6,
-			Seq:       uint64(delta.Seq),
-			IsTrade:   (orderbook.IsTrade &^ delta.Event) == 0,
-			IsBid:     (orderbook.IsBid &^ delta.Event) == 0,
-			Price:     delta.Price,
-			Size:      delta.Size,
-		}
-	}
-
-	return tickBatch
-}
 
 // Exists : Checks if datastore exists
 func (t *Tectonic) Exists(dbName string) bool {
