@@ -179,10 +179,6 @@ func (s *Settings) parseOrderbookSnapshots(symbols ...string) {
 // It is recommended that you call this method concurrently.
 func (s *Settings) ReceiveMessageLoop(output *chan orderbook.DeltaBatch) {
 	var (
-		totalLoops            int
-		smallestBracketLength = 1000
-		minimumLoops          = 50
-
 		seqCount = make(map[int64]uint64, len(s.symbols)) // Key seq by assetCode
 		tectConn = tectonic.DefaultTectonic
 	)
@@ -206,7 +202,7 @@ func (s *Settings) ReceiveMessageLoop(output *chan orderbook.DeltaBatch) {
 			assetCode int64  // Asset code is a string that corresponds to a certain asset-pair on the poloniex exchange. Use this to access that information.
 
 			firstTickEncountered bool // Use this to signal whether we've encountered the first tick or not. For use in the loops below
-			tickIndex            int  // To keep an index of the last location we've inserted
+			tickIndex            int  // Stores the *true* length of the ticks we've detected in our data
 		)
 		_, tickBytes, _ = s.conn.ReadMessage()
 
@@ -221,61 +217,37 @@ func (s *Settings) ReceiveMessageLoop(output *chan orderbook.DeltaBatch) {
 		// Create an array to index the start of every single piece of data we get
 		tickPositions := make([]int, int(len(tickBytes)/20)) // This is a reasonable estimate of the amount of ticks encapsulated within the byte array
 
-		if minimumLoops < totalLoops { // We might have more than 100 symbols on this connection. Let's make sure we all opinions before we continue ;)
-			// For efficiency purposes, we place the most access branch before the second one. This runs second!
-			// *****************
-			// We copy the code here to use the smallest distance between the start of the data and avoid wasting cycles iterating on nothing
-			for char := smallestBracketLength; char < len(tickBytes); char++ {
-				// Get all of the left bracket indicies
-				if firstTickEncountered && tickBytes[char] == '[' {
-					tickPositions[tickIndex] = char
-					tickIndex++
+		// Five pieces of data is the most we can push it before we start making assumptions
+		for char := 5; char < len(tickBytes); char++ {
+			// Get all of the left bracket indicies
+			if firstTickEncountered && tickBytes[char] == '[' {
+				tickPositions[tickIndex] = char
+				tickIndex++
 
-					// To Make sure we don't go out of bounds
-					if len(tickBytes) < char+32 {
-						break
-					}
-					char += 32 // Minimum length of a piece of update data. Updates are the tiniest piece of data that gets sent
-				} else if !firstTickEncountered && tickBytes[char] == '[' {
-					firstTickEncountered = true
-					if char < smallestBracketLength {
-						smallestBracketLength = char + 1 // Add one extra to get the index of the first *real* bracket
-					}
+				// To Make sure we don't go out of bounds
+				if len(tickBytes) < char+32 {
+					break
 				}
-			}
-		} else { // This loops a fixed amount before switching to the faster one. We do this to get the minimum shortest length of the first bracket.
-			for char := 3; char < len(tickBytes); char++ {
-				if firstTickEncountered && tickBytes[char] == '[' { // Ensures that we've encountered the first left bracket
-					// Comments in the block above should explain the importance of all these elements
-					tickPositions[tickIndex] = char
-					tickIndex++
-
-					if len(tickBytes) < char+32 {
-						break
-					}
-					char += 32
-				} else if !firstTickEncountered && tickBytes[char] == '[' {
-					firstTickEncountered = true
-					if char < smallestBracketLength {
-						smallestBracketLength = char + 1
-					}
-				}
+				char += 32 // Minimum length of a piece of update data. Updates are the tiniest piece of data that gets sent
+			} else if !firstTickEncountered && tickBytes[char] == '[' {
+				firstTickEncountered = true
 			}
 		}
+
 		var (
-			blockTimestamp = float64(time.Now().UnixNano()/1000) * 1e-6  // Format the timestamp to be inline with what TectonicDB wants
-			deltas         = make([]orderbook.Delta, len(tickPositions)) // We will return this data to the `output` channel as type `DeltaBatch`
+			blockTimestamp = float64(time.Now().UnixNano()/1000) * 1e-6 // Format the timestamp to be inline with what TectonicDB wants
+			deltas         = make([]orderbook.Delta, tickIndex)         // We will return this data to the `output` channel as type `DeltaBatch`
+			deltaCount     int
 		)
 		// Loops over every bracket. For each bracket, parse all of the data.
 		// All of the parsing of data from the exchange happens here.
 		// We construct deltas of each event and send them back to the `output` channel.
 		for char := 0; char < tickIndex; char++ {
 			var (
-				dataIndex  = tickPositions[char] // Gets starting index of left square bracket `[`
-				deltaCount int
-				side       uint8
-				price      float64
-				size       float64
+				dataIndex = tickPositions[char] // Gets starting index of left square bracket `[`
+				side      uint8
+				price     float64
+				size      float64
 			)
 
 			switch tickBytes[dataIndex+2] { // Update type. "o" is an update, and "t" is a trade event
@@ -293,7 +265,7 @@ func (s *Settings) ReceiveMessageLoop(output *chan orderbook.DeltaBatch) {
 					if tickBytes[dotIndex] == '.' {
 						if priceEncountered { // Get everything from the size data iteration
 							// Parses `size` byte slice to a floating point number
-							size, _ = strconv.ParseFloat(string(tickBytes[dotIndex-sizeIters-1:dotIndex+9]), 32)
+							size, _ = strconv.ParseFloat(string(tickBytes[dotIndex-sizeIters-1:dotIndex+9]), 64)
 
 							deltas[deltaCount] = orderbook.Delta{
 								Timestamp: blockTimestamp,
@@ -344,7 +316,7 @@ func (s *Settings) ReceiveMessageLoop(output *chan orderbook.DeltaBatch) {
 
 							priceGathered = true
 						} else {
-							size, _ = strconv.ParseFloat(string(tickBytes[commaIndex:dotIndex+9]), 32)
+							size, _ = strconv.ParseFloat(string(tickBytes[commaIndex:dotIndex+9]), 64)
 
 							deltas[deltaCount] = orderbook.Delta{
 								Timestamp: blockTimestamp,
@@ -354,8 +326,10 @@ func (s *Settings) ReceiveMessageLoop(output *chan orderbook.DeltaBatch) {
 								Price:     float64(price),
 								Size:      float64(size),
 							}
+
 							seqCount[assetCode]++
 							deltaCount++
+
 							break // Returns control to left bracket/tick iterator
 						}
 					}
@@ -363,10 +337,12 @@ func (s *Settings) ReceiveMessageLoop(output *chan orderbook.DeltaBatch) {
 			}
 		}
 		// After we've finished parsing the tick, let's return a `DeltaBatch` to the `output` channel.
-		*output <- orderbook.DeltaBatch{
-			Exchange: "poloniex",
-			Symbol:   s.assetTable[float64(assetCode)],
-			Deltas:   deltas,
+		if tickIndex != 0 {
+			*output <- orderbook.DeltaBatch{
+				Exchange: "poloniex",
+				Symbol:   s.assetTable[float64(assetCode)],
+				Deltas:   deltas,
+			}
 		}
 	}
 }

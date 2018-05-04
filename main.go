@@ -3,6 +3,7 @@ package main
 import (
 	"gitlab.com/CuteQ/roadkill/exchanges/fast/poloniex"
 	"gitlab.com/CuteQ/roadkill/exchanges/slow/bitmex"
+
 	"gitlab.com/CuteQ/roadkill/orderbook"
 	"gitlab.com/CuteQ/roadkill/orderbook/tectonic"
 )
@@ -15,7 +16,7 @@ func main() {
 		//{"XBTUSD", "ETHM18", "XBT7D_U110", "BTC_ETH", "BTC_XMR", "BTC_ETC", "USDT_BTC", "USDT_ETH"}
 	)
 	exchangeSymbols["bitmex"] = []string{"XBTUSD", "ETHM18", "XBT7D_U110"}
-	exchangeSymbols["poloniex"] = []string{"BTC_ETH", "BTC_XMR", "BTC_ETC", "USDT_BTC", "USDT_ETH"}
+	exchangeSymbols["poloniex"] = []string{"BTC_ETH"} //, "BTC_XMR", "BTC_ETC", "USDT_BTC", "USDT_ETH"}
 
 	tErr := tConn.Connect()
 
@@ -33,11 +34,11 @@ func main() {
 	}
 
 	polo := poloniex.DefaultSettings
-	polo.Initialize("BTC_ETH", "BTC_XMR", "BTC_ETC", "USDT_BTC", "USDT_ETH")
+	polo.Initialize(exchangeSymbols["poloniex"]...)
 
 	bitm := bitmexslow.DefaultSettings
 	bitm.ChannelType = []string{"orderBookL2", "trade"}
-	bitm.Initialize("XBTUSD", "ETHM18", "XBT7D_U110")
+	bitm.Initialize(exchangeSymbols["bitmex"]...)
 
 	go bitm.ReceiveMessageLoop(&receiver)
 	go polo.ReceiveMessageLoop(&receiver)
