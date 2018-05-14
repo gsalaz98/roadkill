@@ -208,12 +208,19 @@ func (s *Settings) ReceiveMessageLoop(output *chan orderbook.DeltaBatch) {
 	for {
 		// Initialize variables we need. Some of these return errors, but we won't do anything with them, we just need to call the method.
 		var (
-			_, tickBytes, _ = s.conn.ReadMessage()
-			tick            = &orderbook.IBitMexTick{}
-			_               = tick.UnmarshalJSON(tickBytes)
-			deltas          = make(map[string][]*orderbook.Delta, len(s.symbols)) // Use this structure instead of list of deltas because sometimes BitMEX returns two different symbol's data in the same message
-			deltaCount      = make(map[string]int, len(tick.Data))
+			_, tickBytes, connErr = s.conn.ReadMessage()
+			tick                  = &orderbook.IBitMexTick{}
+			_                     = tick.UnmarshalJSON(tickBytes)
+			deltas                = make(map[string][]*orderbook.Delta, len(s.symbols)) // Use this structure instead of list of deltas because sometimes BitMEX returns two different symbol's data in the same message
+			deltaCount            = make(map[string]int, len(tick.Data))
 		)
+
+		// Let's restart the connection if we get an error with the connection
+		if connErr != nil {
+			s.conn.Close()
+			s.Initialize(s.symbols...)
+			s.ReceiveMessageLoop(output)
+		}
 
 		if tick.Action == "" {
 			continue
