@@ -4,3 +4,6 @@
 
 # VSCode Project Folder Settings
 .vscode/
+
+# Compiled Binaries
+bin/*

@@ -3,23 +3,22 @@ package orderbook
 // Orderbook event types. This is used to encode two boolean values
 // into one byte of data instead of two. This saves lots of space in the long run.
 const (
-	IsBid uint8 = 1 << 5
-	IsAsk uint8 = 1 << 4
-
-	IsTrade  uint8 = 1 << 3
-	IsUpdate uint8 = 1 << 2
-	IsRemove uint8 = 1 << 1
-	IsInsert uint8 = 1 << 0 // Some exchanges choose to transmit an insert event. Let's have it here for good measure.
+	IsInsert uint8 = 1 << iota
+	IsRemove uint8 = 1 << iota
+	IsUpdate uint8 = 1 << iota
+	IsTrade  uint8 = 1 << iota
+	IsAsk    uint8 = 1 << iota
+	IsBid    uint8 = 1 << iota
 )
 
-// Delta : Same format as `tectonic.Tick` - should make our lives much easier in the long run
+// Delta : Indicates a change in the orderbook state
 type Delta struct {
 	Timestamp float64 `json:"ts"`
-	Seq       uint64  `json:"seq"`
-	IsTrade   bool    `json:"is_trade"`
-	IsBid     bool    `json:"is_bid"`
 	Price     float64 `json:"price"`
 	Size      float64 `json:"size"`
+	Seq       uint32  `json:"seq"`
+	IsTrade   bool    `json:"is_trade"`
+	IsBid     bool    `json:"is_bid"`
 }
 
 // LegacyDelta : This stores orderbook tick deltas used to reconstruct the orderbook.
@@ -36,7 +35,7 @@ type LegacyDelta struct {
 type DeltaBatch struct {
 	Exchange string `json:"e"`
 	Symbol   string `json:"s"`
-	Deltas   []Delta
+	Deltas   []*Delta
 }
 
 // Snapshot : Here we store the orderbook data before we serialize it and
@@ -53,15 +52,35 @@ type Snapshot struct {
 // for the ordrebook, then loaded into the predefined structure `OrderbookSnapshot`
 type IOrderbookSnapshot []interface{}
 
-// ITickMessage : For JSON objects returned from sockets, save them in this interface.
+// ITickMessage : For JSON objects returned from sockets, save them in this interface if a specific type doesn't exist.
 type ITickMessage []interface{}
-
-// NormalizedSymbol : Lookup in the database the equivalent name for a given market and asset.
-// e.g., In BitMEX, Bitcoin is represented as `XBT`, whereas in most other exchanges,
-// it's abbreviated `BTC`. Changes like these must be accounted for
-func NormalizedSymbol(exchange, symbol string) {} // TODO: work on this
 
 // TODO LIST:
 //
 // Futures date generator/parser
 // Options data capturing from Deribit
+
+// -----------------------------------------------
+// |    BEGIN ORDERBOOK STATE IMPLEMENTATION     |
+// -----------------------------------------------
+
+type BidEntry struct {
+}
+
+// Orderbook : Maintains the state of the orderbook for any given symbol
+type Orderbook struct {
+	TickSize float32
+	LotSize  float32
+
+	BidSide []float32
+	AskSide []float32
+
+	BestBid uint64
+	BestAsk uint64
+
+	InsertBid func(priceLevel uint64)
+	InsertAsk func(priceLevel uint64)
+
+	RemoveBid func(priceLevel uint64)
+	RemoveAsk func(priceLevel uint64)
+}

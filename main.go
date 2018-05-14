@@ -1,8 +1,8 @@
 package main
 
 import (
-	"gitlab.com/CuteQ/roadkill/exchanges/fast/poloniex"
-	"gitlab.com/CuteQ/roadkill/exchanges/slow/bitmex"
+	"gitlab.com/CuteQ/roadkill/exchanges/websockets/fast/poloniex"
+	"gitlab.com/CuteQ/roadkill/exchanges/websockets/slow/bitmex"
 
 	"gitlab.com/CuteQ/roadkill/orderbook"
 	"gitlab.com/CuteQ/roadkill/orderbook/tectonic"
@@ -13,7 +13,6 @@ func main() {
 		receiver        = make(chan orderbook.DeltaBatch, 1<<16)
 		tConn           = tectonic.DefaultTectonic
 		exchangeSymbols = make(map[string][]string, 64)
-		//{"XBTUSD", "ETHM18", "XBT7D_U110", "BTC_ETH", "BTC_XMR", "BTC_ETC", "USDT_BTC", "USDT_ETH"}
 	)
 	exchangeSymbols["bitmex"] = []string{"XBTUSD", "ETHM18", "XBT7D_U110"}
 	exchangeSymbols["poloniex"] = []string{"BTC_ETH", "BTC_XMR", "BTC_ETC", "USDT_BTC", "USDT_ETH"}

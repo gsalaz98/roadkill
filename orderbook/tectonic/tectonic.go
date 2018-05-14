@@ -56,7 +56,7 @@ type Tectonic struct {
 // SendMessage()								( string, error )		done
 //
 // DeltaToTick(delta orderbook.Delta)			Tick			done
-// DeltaBatchToTick(deltas []orderbook.Delta)	[]Tick			done
+// DeltaBatchToTick(deltas []*orderbook.Delta)	[]Tick			done
 // ****************************
 
 // Pool : TODO
@@ -111,7 +111,7 @@ func (t *Tectonic) Perf() (string, error) {
 }
 
 // BulkAdd : TODO
-func (t *Tectonic) BulkAdd(ticks []orderbook.Delta) error {
+func (t *Tectonic) BulkAdd(ticks []*orderbook.Delta) error {
 	_, _ = t.SendMessage("BULKADD")
 
 	for _, tick := range ticks {
@@ -135,7 +135,7 @@ func (t *Tectonic) BulkAdd(ticks []orderbook.Delta) error {
 }
 
 // BulkAddInto : TODO
-func (t *Tectonic) BulkAddInto(dbName string, ticks []orderbook.Delta) error {
+func (t *Tectonic) BulkAddInto(dbName string, ticks []*orderbook.Delta) error {
 	_, _ = t.SendMessage("BULKADD INTO " + dbName)
 
 	for _, tick := range ticks {
@@ -176,11 +176,11 @@ func (t *Tectonic) Create(dbName string) error {
 }
 
 // Get : "Returns `amount` items from current store"
-func (t *Tectonic) Get(amount uint64) ([]orderbook.Delta, error) {
+func (t *Tectonic) Get(amount uint64) ([]*orderbook.Delta, error) {
 	// We use a buffer here to make it easier to maintain
 	var (
 		msgBuf  = bytes.Buffer{}
-		msgJSON = []orderbook.Delta{}
+		msgJSON = []*orderbook.Delta{}
 	)
 	msgBuf.WriteString("GET ")
 	msgBuf.WriteString(strconv.Itoa(int(amount)))
@@ -193,11 +193,11 @@ func (t *Tectonic) Get(amount uint64) ([]orderbook.Delta, error) {
 }
 
 // GetFrom : Returns items from specified store
-func (t *Tectonic) GetFrom(dbName string, amount uint64, asTick bool) ([]orderbook.Delta, error) {
+func (t *Tectonic) GetFrom(dbName string, amount uint64, asTick bool) ([]*orderbook.Delta, error) {
 	// We use a buffer here to make it easier to maintain
 	var (
 		msgBuf  = bytes.Buffer{}
-		msgJSON = []orderbook.Delta{}
+		msgJSON = []*orderbook.Delta{}
 	)
 	msgBuf.WriteString("GET ")
 	msgBuf.WriteString(strconv.Itoa(int(amount)))
