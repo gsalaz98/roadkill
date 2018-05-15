@@ -222,7 +222,8 @@ func (s *Settings) ReceiveMessageLoop(output *chan orderbook.DeltaBatch) {
 			s.ReceiveMessageLoop(output)
 		}
 
-		if tick.Action == "" {
+		// If we get a empty tick or a partial, let's skip it (for the meanwhile)
+		if tick.Action == "" || tick.Action == "partial" {
 			continue
 		}
 

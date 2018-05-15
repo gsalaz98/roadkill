@@ -31,7 +31,7 @@ type LegacyDelta struct {
 	Size      float64 `json:"z"`
 }
 
-// DeltaBatch : This is the representation of multiple Delta struct objects, mainly used for batch insertion or sending
+// DeltaBatch : This is the representation of multiple Delta struct objects, mainly used for batch insertion
 type DeltaBatch struct {
 	Exchange string `json:"e"`
 	Symbol   string `json:"s"`
