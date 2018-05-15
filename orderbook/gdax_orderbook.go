@@ -36,7 +36,7 @@ type SlowGDAXMatches struct {
 	Type      string `json:"type"`       // Channel name
 	TradeID   uint64 `json:"trade_id"`   // Trade seq count
 	Sequence  uint64 `json:"sequence"`   // Orderbook seq count
-	Time      string `json:"time"`       // timestamp in ISO9001 format
+	Time      string `json:"time"`       // timestamp in ISO8601 format
 	ProductID string `json:"product_id"` // asset-pair
 	Price     string `json:"price"`      // Order @price
 	Side      string `json:"side"`       // Either "buy" or "sell"
