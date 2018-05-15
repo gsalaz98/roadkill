@@ -31,16 +31,14 @@ type SlowGDAXOrderbookUpdates struct {
 	Changes   [][]string `json:"changes"`    // Data is sent as follows: [["buy", "<price>", "<size>"], ...] - Removals have size=0
 }
 
-// SlowGDAXMatches : Otherwise known as the "ticker" channel, this tracks any trades made on the GDAX exchange
+// SlowGDAXMatches : Otherwise known as the "match" channel, this tracks any trades made on the GDAX exchange
 type SlowGDAXMatches struct {
 	Type      string `json:"type"`       // Channel name
 	TradeID   uint64 `json:"trade_id"`   // Trade seq count
 	Sequence  uint64 `json:"sequence"`   // Orderbook seq count
 	Time      string `json:"time"`       // timestamp in ISO8601 format
 	ProductID string `json:"product_id"` // asset-pair
-	Price     string `json:"price"`      // Order @price
+	Price     string `json:"price"`      // Order at price level
 	Side      string `json:"side"`       // Either "buy" or "sell"
-	LastSize  string `json:"last_size"`  // Order size
-	BestBid   string `json:"best_bid"`   // Best bid when trade occured
-	BestAsk   string `json:"best_ask"`   // Best ask when trade occured
+	Size      string `json:"size"`       // Order size
 }

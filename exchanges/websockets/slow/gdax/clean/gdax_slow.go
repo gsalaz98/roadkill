@@ -1,9 +1,10 @@
 package gdaxslow
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"gitlab.com/CuteQ/roadkill/orderbook"
@@ -28,7 +29,7 @@ var DefaultSettings = Settings{
 	connURL: "wss://ws-feed.gdax.com",
 	headers: http.Header{},
 
-	ChannelType: []string{"full"},
+	ChannelType: []string{"level2", "matches"},
 }
 
 // CreateConnection : Creates a websocket connection and returns the connection object
@@ -92,21 +93,84 @@ func (s *Settings) Initialize(symbols ...string) {
 // ReceiveMessageLoop : This runs infinitely until the connection is closed by the user or server.
 // It is recommended that you call this method concurrently.
 func (s *Settings) ReceiveMessageLoop(output *chan orderbook.DeltaBatch) {
+	var seqCount uint32
+recvLoop:
 	for {
-		var tickJSON interface{}
+		var (
+			matchMessage   orderbook.SlowGDAXMatches
+			updateMessage  orderbook.SlowGDAXOrderbookUpdates
+			blockTimestamp = float64(time.Now().UnixNano()/1000) * 1e-6
+		)
 
-		_, tickBytes, _ := s.conn.ReadMessage()
-		json.Unmarshal(tickBytes, &tickJSON)
+		_, tickBytes, readErr := s.conn.ReadMessage()
 
-		if tickBytes[9] == 'r' {
-			continue
+		// Restarts the connection in case of a disconnection or unforseen error
+		if readErr != nil {
+			s.conn.Close()
+			s.Initialize(s.symbols...)
+			s.ReceiveMessageLoop(output)
 		}
 
-		switch tickJSON["type"] {
-		case "open": // LOB update
+		switch tickBytes[9] {
+		case 's': // Snapshot event
+			// TODO: Implement this
+			continue recvLoop
+		case 't': // Trade/match event
+			matchMessage.UnmarshalJSON(tickBytes)
 
-		case "done":
-		case "match":
+			var (
+				price, _ = strconv.ParseFloat(matchMessage.Price, 64)
+				size, _  = strconv.ParseFloat(matchMessage.Size, 64)
+				side     = orderbook.IsBid
+			)
+			if matchMessage.Side == "sell" {
+				side = orderbook.IsAsk
+			}
+
+			*output <- orderbook.DeltaBatch{
+				Exchange: "gdax",
+				Symbol:   matchMessage.ProductID,
+				Deltas: []*orderbook.Delta{&orderbook.Delta{
+					Timestamp: blockTimestamp,
+					Price:     price,
+					Size:      size,
+					Seq:       uint32(matchMessage.Sequence),
+					IsTrade:   true,
+					IsBid:     side == orderbook.IsBid,
+				}},
+			}
+
+		case 'l': // Orderbook update event
+			updateMessage.UnmarshalJSON(tickBytes)
+
+			deltaBatch := make([]*orderbook.Delta, len(updateMessage.Changes))
+
+			for updateSeq, updateTick := range updateMessage.Changes {
+				var (
+					side     = orderbook.IsBid
+					price, _ = strconv.ParseFloat(updateTick[1], 64)
+					size, _  = strconv.ParseFloat(updateTick[2], 64)
+				)
+				if updateTick[0] == "sell" {
+					side = orderbook.IsAsk
+				}
+
+				deltaBatch[updateSeq] = &orderbook.Delta{
+					Timestamp: blockTimestamp,
+					Price:     price,
+					Size:      size,
+					Seq:       seqCount, // TODO: Fix this
+					IsTrade:   false,
+					IsBid:     side == orderbook.IsBid,
+				}
+				seqCount++
+			}
+
+			*output <- orderbook.DeltaBatch{
+				Exchange: "gdax",
+				Symbol:   updateMessage.ProductID,
+				Deltas:   deltaBatch,
+			}
 		}
 	}
 }
