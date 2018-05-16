@@ -97,16 +97,18 @@ func (s *Settings) ReceiveMessageLoop(output *chan orderbook.DeltaBatch) {
 recvLoop:
 	for {
 		var (
-			matchMessage   orderbook.SlowGDAXMatches
-			updateMessage  orderbook.SlowGDAXOrderbookUpdates
-			blockTimestamp = float64(time.Now().UnixNano()/1000) * 1e-6
+			blockTimestamp        = float64(time.Now().UnixNano()/1000) * 1e-6
+			_, tickBytes, readErr = s.conn.ReadMessage()
 		)
-
-		_, tickBytes, readErr := s.conn.ReadMessage()
 
 		// Restarts the connection in case of a disconnection or unforseen error
 		if readErr != nil {
+			// I personally have problems running this quick hack for production systems.
+			// I don't know how go handles functions running on the stack, especially for prolonged periods.
+			// Perhaps we can fix this by sending a special message to the channel? TODO
+			fmt.Println("Connection was closed")
 			s.conn.Close()
+			s.conn = nil
 			s.Initialize(s.symbols...)
 			s.ReceiveMessageLoop(output)
 		}
@@ -116,6 +118,7 @@ recvLoop:
 			// TODO: Implement this
 			continue recvLoop
 		case 't': // Trade/match event
+			var matchMessage orderbook.SlowGDAXMatches
 			matchMessage.UnmarshalJSON(tickBytes)
 
 			var (
@@ -141,6 +144,7 @@ recvLoop:
 			}
 
 		case 'l': // Orderbook update event
+			var updateMessage orderbook.SlowGDAXOrderbookUpdates
 			updateMessage.UnmarshalJSON(tickBytes)
 
 			deltaBatch := make([]*orderbook.Delta, len(updateMessage.Changes))
