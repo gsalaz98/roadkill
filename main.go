@@ -1,7 +1,9 @@
 package main
 
 import (
+	"gitlab.com/CuteQ/roadkill/exchanges/websockets/fast/poloniex"
 	"gitlab.com/CuteQ/roadkill/exchanges/websockets/slow/bitmex"
+	"gitlab.com/CuteQ/roadkill/exchanges/websockets/slow/gdax/clean"
 
 	"gitlab.com/CuteQ/roadkill/orderbook"
 	"gitlab.com/CuteQ/roadkill/orderbook/tectonic"
@@ -13,6 +15,7 @@ func main() {
 		tConn           = tectonic.DefaultTectonic
 		exchangeSymbols = make(map[string][]string, 64)
 	)
+	exchangeSymbols["gdax"] = []string{"BTC-USD", "ETH-USD", "BTC-ETH"}
 	exchangeSymbols["bitmex"] = []string{"XBTUSD", "ETHM18", "XBT7D_U110", "XBT7D_D90"}
 	exchangeSymbols["poloniex"] = []string{"BTC_ETH", "BTC_XMR", "BTC_ETC", "USDT_BTC", "USDT_ETH"}
 
@@ -31,15 +34,21 @@ func main() {
 		}
 	}
 
-	//polo := poloniex.DefaultSettings
-	//polo.Initialize(exchangeSymbols["poloniex"]...)
+	// TODO: Automate this process
+	// TODO: Initialize web server
+	polo := poloniex.DefaultSettings
+	polo.Initialize(exchangeSymbols["poloniex"]...)
 
 	bitm := bitmexslow.DefaultSettings
 	bitm.ChannelType = []string{"orderBookL2", "trade"}
 	bitm.Initialize(exchangeSymbols["bitmex"]...)
 
+	gdax := gdaxslow.DefaultSettings
+	gdax.Initialize(exchangeSymbols["gdax"]...)
+
 	go bitm.ReceiveMessageLoop(&receiver)
-	//go polo.ReceiveMessageLoop(&receiver)
+	go polo.ReceiveMessageLoop(&receiver)
+	go gdax.ReceiveMessageLoop(&receiver)
 
 	for {
 		var (
