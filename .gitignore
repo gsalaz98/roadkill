@@ -6,4 +6,4 @@
 .vscode/
 
 # Compiled Binaries
-bin/*
+bin/

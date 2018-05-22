@@ -7,8 +7,6 @@ import (
 	"strconv"
 	"time"
 
-	"gitlab.com/CuteQ/roadkill/orderbook/tectonic"
-
 	"github.com/gorilla/websocket"
 	"github.com/pquerna/ffjson/ffjson"
 	"gitlab.com/CuteQ/roadkill/orderbook"
@@ -178,23 +176,7 @@ func (s *Settings) parseOrderbookSnapshots(symbols ...string) {
 // ReceiveMessageLoop : This runs infinitely until the connection is closed by the user or server.
 // It is recommended that you call this method concurrently.
 func (s *Settings) ReceiveMessageLoop(output *chan orderbook.DeltaBatch) {
-	var (
-		seqCount = make(map[int64]uint32, len(s.symbols)) // Key seq by assetCode
-		tectConn = tectonic.DefaultTectonic
-	)
-	err := tectConn.Connect()
-
-	if err != nil {
-		panic(err)
-	}
-
-	for _, symbol := range s.symbols {
-		dbName := fmt.Sprintf("poloniex:%s", symbol)
-		if tectConn.Exists(dbName) {
-			continue
-		}
-		tectConn.Create("poloniex:" + symbol)
-	}
+	var seqCount = make(map[int64]uint32, len(s.symbols)) // Key seq by assetCode
 
 	for {
 		var (
