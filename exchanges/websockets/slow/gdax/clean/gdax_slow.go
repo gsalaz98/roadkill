@@ -106,16 +106,11 @@ recvLoop:
 			// I personally have problems running this quick hack for production systems.
 			// I don't know how go handles functions running on the stack, especially for prolonged periods.
 			// Perhaps we can fix this by sending a special message to the channel? TODO
-			fmt.Println("Connection was closed", readErr)
-			fmt.Println(string(tickBytes[:]))
-			fmt.Println(tickBytes)
-
+			fmt.Println("Connection was closed")
 			s.conn.Close()
 			s.conn = nil
-			return
-
-			//s.Initialize(s.symbols...)
-			//s.ReceiveMessageLoop(output)
+			s.Initialize(s.symbols...)
+			s.ReceiveMessageLoop(output)
 		}
 
 		switch tickBytes[9] {

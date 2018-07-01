@@ -15,7 +15,7 @@ func main() {
 		tConn           = tectonic.DefaultTectonic
 		exchangeSymbols = make(map[string][]string, 64)
 	)
-	exchangeSymbols["gdax"] = []string{"BTC-USD", "ETH-USD"}
+	exchangeSymbols["gdax"] = []string{"BTC-USD", "ETH-USD", "BTC-ETH"}
 	exchangeSymbols["bitmex"] = []string{"XBTUSD", "ETHM18", "XBT7D_U110", "XBT7D_D90"}
 	exchangeSymbols["poloniex"] = []string{"BTC_ETH", "BTC_XMR", "BTC_ETC", "USDT_BTC", "USDT_ETH"}
 
