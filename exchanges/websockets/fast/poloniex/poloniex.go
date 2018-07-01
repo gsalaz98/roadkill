@@ -7,11 +7,11 @@ import (
 	"strconv"
 	"time"
 
-	"gitlab.com/CuteQ/roadkill/orderbook/tectonic"
+	"github.com/gsalaz98/roadkill/orderbook/tectonic"
 
 	"github.com/gorilla/websocket"
 	"github.com/pquerna/ffjson/ffjson"
-	"gitlab.com/CuteQ/roadkill/orderbook"
+	"github.com/gsalaz98/roadkill/orderbook"
 )
 
 // ExchangeName : Exchange name as an exportable constant

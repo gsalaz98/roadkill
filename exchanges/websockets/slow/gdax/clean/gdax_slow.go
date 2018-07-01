@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"gitlab.com/CuteQ/roadkill/orderbook"
+	"github.com/gsalaz98/roadkill/orderbook"
 )
 
 // Settings : Structure is used to load settings into the application.

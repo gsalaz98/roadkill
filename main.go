@@ -1,12 +1,12 @@
 package main
 
 import (
-	"gitlab.com/CuteQ/roadkill/exchanges/websockets/fast/poloniex"
-	"gitlab.com/CuteQ/roadkill/exchanges/websockets/slow/bitmex"
-	"gitlab.com/CuteQ/roadkill/exchanges/websockets/slow/gdax/clean"
+	"github.com/gsalaz98/roadkill/exchanges/websockets/fast/poloniex"
+	"github.com/gsalaz98/roadkill/exchanges/websockets/slow/bitmex"
+	"github.com/gsalaz98/roadkill/exchanges/websockets/slow/gdax/clean"
 
-	"gitlab.com/CuteQ/roadkill/orderbook"
-	"gitlab.com/CuteQ/roadkill/orderbook/tectonic"
+	"github.com/gsalaz98/roadkill/orderbook"
+	"github.com/gsalaz98/roadkill/orderbook/tectonic"
 )
 
 func main() {

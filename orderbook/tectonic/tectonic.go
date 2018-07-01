@@ -7,7 +7,7 @@ import (
 	"strconv"
 
 	"github.com/pquerna/ffjson/ffjson"
-	"gitlab.com/CuteQ/roadkill/orderbook"
+	"github.com/gsalaz98/roadkill/orderbook"
 )
 
 // Tectonic : Main type for single-instance connection to the Tectonic database

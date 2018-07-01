@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"gitlab.com/CuteQ/roadkill/orderbook"
+	"github.com/gsalaz98/roadkill/orderbook"
 )
 
 func average(looptime []uint64) float64 {
