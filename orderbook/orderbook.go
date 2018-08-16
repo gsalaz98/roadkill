@@ -11,7 +11,9 @@ const (
 	IsBid    uint8 = 1 << iota
 )
 
-// Delta : Indicates a change in the orderbook state
+// Delta : Indicates a change in the orderbook state. This delta struct also works for
+// options and other derivative products. The field `IsBid` is overloaded to equal a call
+// option if it is true.
 type Delta struct {
 	Timestamp float64 `json:"ts"`
 	Price     float64 `json:"price"`
@@ -19,16 +21,6 @@ type Delta struct {
 	Seq       uint32  `json:"seq"`
 	IsTrade   bool    `json:"is_trade"`
 	IsBid     bool    `json:"is_bid"`
-}
-
-// LegacyDelta : This stores orderbook tick deltas used to reconstruct the orderbook.
-// It is constructed in a way to save as much space in storage per tick.
-type LegacyDelta struct {
-	Timestamp uint64  `json:"d"`
-	Seq       uint64  `json:"s"`
-	Event     uint8   `json:"e"`
-	Price     float64 `json:"p"`
-	Size      float64 `json:"z"`
 }
 
 // DeltaBatch : This is the representation of multiple Delta struct objects, mainly used for batch insertion

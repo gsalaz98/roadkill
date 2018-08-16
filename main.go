@@ -34,8 +34,6 @@ func main() {
 		}
 	}
 
-	// TODO: Automate this process
-	// TODO: Initialize web server
 	polo := poloniex.DefaultSettings
 	polo.Initialize(exchangeSymbols["poloniex"]...)
 
