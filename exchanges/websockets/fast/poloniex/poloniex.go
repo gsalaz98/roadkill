@@ -10,8 +10,8 @@ import (
 	"github.com/gsalaz98/roadkill/orderbook/tectonic"
 
 	"github.com/gorilla/websocket"
-	"github.com/pquerna/ffjson/ffjson"
 	"github.com/gsalaz98/roadkill/orderbook"
+	"github.com/pquerna/ffjson/ffjson"
 )
 
 // ExchangeName : Exchange name as an exportable constant
@@ -241,7 +241,7 @@ func (s *Settings) ReceiveMessageLoop(output *chan orderbook.DeltaBatch) {
 
 		var (
 			blockTimestamp = float64(time.Now().UnixNano()/1000) * 1e-6 // Format the timestamp to be inline with what TectonicDB wants
-			deltas         = make([]*orderbook.Delta, tickIndex)        // We will return this data to the `output` channel as type `DeltaBatch`
+			deltas         = make([]orderbook.Delta, tickIndex)         // We will return this data to the `output` channel as type `DeltaBatch`
 			deltaCount     int
 		)
 		// Loops over every bracket. For each bracket, parse all of the data.
@@ -269,7 +269,7 @@ func (s *Settings) ReceiveMessageLoop(output *chan orderbook.DeltaBatch) {
 							// Parses `size` byte slice to a floating point number
 							size, _ = strconv.ParseFloat(string(tickBytes[dotIndex-sizeIters-1:dotIndex+9]), 64)
 
-							deltas[deltaCount] = &orderbook.Delta{
+							deltas[deltaCount] = orderbook.Delta{
 								Timestamp: blockTimestamp,
 								Seq:       seqCount[assetCode],
 								IsTrade:   false,
@@ -320,7 +320,7 @@ func (s *Settings) ReceiveMessageLoop(output *chan orderbook.DeltaBatch) {
 						} else {
 							size, _ = strconv.ParseFloat(string(tickBytes[commaIndex:dotIndex+9]), 64)
 
-							deltas[deltaCount] = &orderbook.Delta{
+							deltas[deltaCount] = orderbook.Delta{
 								Timestamp: blockTimestamp,
 								Seq:       seqCount[assetCode],
 								IsTrade:   true,
@@ -343,7 +343,7 @@ func (s *Settings) ReceiveMessageLoop(output *chan orderbook.DeltaBatch) {
 			*output <- orderbook.DeltaBatch{
 				Exchange: "poloniex",
 				Symbol:   s.assetTable[float64(assetCode)],
-				Deltas:   deltas,
+				Deltas:   &deltas,
 			}
 		}
 	}

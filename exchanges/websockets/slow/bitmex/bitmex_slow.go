@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/pquerna/ffjson/ffjson"
 	"github.com/gsalaz98/roadkill/orderbook"
+	"github.com/pquerna/ffjson/ffjson"
 )
 
 // Settings : Structure is used to load settings into the application.
@@ -211,7 +211,7 @@ func (s *Settings) ReceiveMessageLoop(output *chan orderbook.DeltaBatch) {
 			_, tickBytes, connErr = s.conn.ReadMessage()
 			tick                  = &orderbook.IBitMexTick{}
 			_                     = tick.UnmarshalJSON(tickBytes)
-			deltas                = make(map[string][]*orderbook.Delta, len(s.symbols)) // Use this structure instead of list of deltas because sometimes BitMEX returns two different symbol's data in the same message
+			deltas                = make(map[string][]orderbook.Delta, len(s.symbols)) // Use this structure instead of list of deltas because sometimes BitMEX returns two different symbol's data in the same message
 			deltaCount            = make(map[string]int, len(tick.Data))
 		)
 
@@ -235,11 +235,11 @@ func (s *Settings) ReceiveMessageLoop(output *chan orderbook.DeltaBatch) {
 			for _, update := range tick.Data {
 
 				if deltas[update.Symbol] == nil {
-					deltas[update.Symbol] = make([]*orderbook.Delta, len(tick.Data))
+					deltas[update.Symbol] = make([]orderbook.Delta, len(tick.Data))
 					deltaCount[update.Symbol] = 0
 				}
 
-				deltas[update.Symbol][deltaCount[update.Symbol]] = &orderbook.Delta{
+				deltas[update.Symbol][deltaCount[update.Symbol]] = orderbook.Delta{
 					Timestamp: blockTimestamp,
 					Seq:       seqCount[update.Symbol],
 					IsTrade:   false,
@@ -275,18 +275,18 @@ func (s *Settings) ReceiveMessageLoop(output *chan orderbook.DeltaBatch) {
 				*output <- orderbook.DeltaBatch{
 					Exchange: "bitmex",
 					Symbol:   symbol,
-					Deltas:   tickDeltas,
+					Deltas:   &tickDeltas,
 				}
 			}
 
 		} else if tick.Table == tradeTableName {
 			for _, trade := range tick.Data {
 				if deltas[trade.Symbol] == nil {
-					deltas[trade.Symbol] = make([]*orderbook.Delta, len(tick.Data))
+					deltas[trade.Symbol] = make([]orderbook.Delta, len(tick.Data))
 					deltaCount[trade.Symbol] = 0
 				}
 
-				deltas[trade.Symbol][deltaCount[trade.Symbol]] = &orderbook.Delta{
+				deltas[trade.Symbol][deltaCount[trade.Symbol]] = orderbook.Delta{
 					Timestamp: blockTimestamp,
 					Seq:       seqCount[trade.Symbol],
 					IsTrade:   true,
@@ -303,7 +303,7 @@ func (s *Settings) ReceiveMessageLoop(output *chan orderbook.DeltaBatch) {
 				*output <- orderbook.DeltaBatch{
 					Exchange: "bitmex",
 					Symbol:   symbol,
-					Deltas:   tickDeltas,
+					Deltas:   &tickDeltas,
 				}
 			}
 		}

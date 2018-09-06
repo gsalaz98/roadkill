@@ -133,7 +133,7 @@ recvLoop:
 			*output <- orderbook.DeltaBatch{
 				Exchange: "gdax",
 				Symbol:   matchMessage.ProductID,
-				Deltas: []*orderbook.Delta{&orderbook.Delta{
+				Deltas: &[]orderbook.Delta{orderbook.Delta{
 					Timestamp: blockTimestamp,
 					Price:     price,
 					Size:      size,
@@ -147,7 +147,7 @@ recvLoop:
 			var updateMessage orderbook.SlowGDAXOrderbookUpdates
 			updateMessage.UnmarshalJSON(tickBytes)
 
-			deltaBatch := make([]*orderbook.Delta, len(updateMessage.Changes))
+			deltaBatch := make([]orderbook.Delta, len(updateMessage.Changes))
 
 			for updateSeq, updateTick := range updateMessage.Changes {
 				var (
@@ -159,7 +159,7 @@ recvLoop:
 					side = orderbook.IsAsk
 				}
 
-				deltaBatch[updateSeq] = &orderbook.Delta{
+				deltaBatch[updateSeq] = orderbook.Delta{
 					Timestamp: blockTimestamp,
 					Price:     price,
 					Size:      size,
@@ -173,7 +173,7 @@ recvLoop:
 			*output <- orderbook.DeltaBatch{
 				Exchange: "gdax",
 				Symbol:   updateMessage.ProductID,
-				Deltas:   deltaBatch,
+				Deltas:   &deltaBatch,
 			}
 		}
 	}

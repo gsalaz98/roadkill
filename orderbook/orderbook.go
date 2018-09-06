@@ -27,7 +27,7 @@ type Delta struct {
 type DeltaBatch struct {
 	Exchange string `json:"e"`
 	Symbol   string `json:"s"`
-	Deltas   []*Delta
+	Deltas   *[]Delta
 }
 
 // Snapshot : Here we store the orderbook data before we serialize it and
