@@ -53,11 +53,29 @@ func main() {
 			tickBatch = <-receiver
 			dbName    = tickBatch.Exchange + ":" + tickBatch.Symbol
 		)
-		insErr := tConn.BulkAddInto(dbName, tickBatch.Deltas)
+		insErr := tConn.BulkAddInto(dbName, convertToTDelta(tickBatch.Deltas))
 		// Catch any insertion errors here
 		// TODO: Implement some logging here
 		if insErr != nil {
 			panic(insErr)
 		}
 	}
+}
+
+// convertToTDelta : Function converts an array of `Delta` structs
+// from type `*[]orderbook.Delta` to `*[]tectonic.Delta`
+func convertToTDelta(delta *[]orderbook.Delta) *[]tectonic.Delta {
+	newDeltas := make([]tectonic.Delta, 0, len(*delta))
+
+	for _, d := range *delta {
+		newDeltas = append(newDeltas, tectonic.Delta{
+			Timestamp: d.Timestamp,
+			Price:     d.Price,
+			Size:      d.Size,
+			Seq:       d.Seq,
+			IsTrade:   d.IsTrade,
+			IsBid:     d.IsBid,
+		})
+	}
+	return &newDeltas
 }
