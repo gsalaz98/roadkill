@@ -11,6 +11,6 @@ Without further adeu, here's a table demonstrating the compression capabilities 
 | **`ncompress`**| 47.544% | Fast | None |
 | **`bzip2`** | 62.257% | Fast | Accessible |
 | **`ZPAQ (lrzip)`** | 72.547% | Slower | Rarer |
-| **`paq8px`** | 79.969% | Slow as *FUCK* (1hr) | Fuck you, you piece of shit. |
+| **`paq8px`** | 79.969% | Slow as *FUCK* (1hr) | Don't use unless you happen to have time|
 
-Note: never ever run `paq8px` unless you have a lot of idle-time to compress AND decompress your data, and you happen to hate your computer (I'm so sorry, dear workstation).
+Note: never ever run `paq8px` unless you have a lot of idle-time to compress AND decompress your data.

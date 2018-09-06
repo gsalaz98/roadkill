@@ -7,8 +7,19 @@ import (
 	"strconv"
 
 	"github.com/pquerna/ffjson/ffjson"
-	"github.com/gsalaz98/roadkill/orderbook"
 )
+
+// Delta : Indicates a change in the orderbook state. This delta struct also works for
+// options and other derivative products. The field `IsBid` is overloaded to equal a call
+// option if it is true.
+type Delta struct {
+	Timestamp float64 `json:"ts"`
+	Price     float64 `json:"price"`
+	Size      float64 `json:"size"`
+	Seq       uint32  `json:"seq"`
+	IsTrade   bool    `json:"is_trade"`
+	IsBid     bool    `json:"is_bid"`
+}
 
 // Tectonic : Main type for single-instance connection to the Tectonic database
 type Tectonic struct {
@@ -28,35 +39,32 @@ type Tectonic struct {
 
 // TectonicDB function prototypes
 // ****************************
-// Help()										( string, error )		done
-// Ping()										( string, error )		done
-// Info()										( string, error )		done
-// Perf()										( string, error )		done
-// BulkAdd(ticks TTick)							error					done
-// BulkAddInto(dbName string, ticks TTick)		error					done
-// Use(dbName string) 							error					done
-// Create(dbName string) 						error					done
-// Get(amount int) 								( []TTick, error )		done
-// GetFrom(amount int, dbName string)			( []TTick, error )		done
-// Insert(t TTick)								error					done
-// InsertInto(dbName string, t TTick)			error					done
-// Count()										uint64					done
-// CountAll()									uint64					done
-// Clear()										error					done
-// ClearAll()									error					done
-// Flush()										error					done
-// FlushAll()									error					done
-// Subscribe(dbName, message chan string)		error					incomplete
-// Unsubscribe()								error					incomplete
-// Exists(dbName string)						bool					done
+// Help()                                               ( string, error )       done
+// Ping()                                               ( string, error )       done
+// Info()                                               ( string, error )       done
+// Perf()                                               ( string, error )       done
+// BulkAdd(ticks *[]Delta)                              error                   done
+// BulkAddInto(dbName string, ticks *[]Delta)	        error                   done
+// Use(dbName string)                                   error                   done
+// Create(dbName string)                                error                   done
+// Get(amount int)                                      ( *[]Delta, error )     done
+// GetFrom(amount int, dbName string, asTick bool)      ( *[]Delta, error )     done
+// Insert(tick *Delta)                                   error                   done
+// InsertInto(dbName string, tick *Delta)                error                   done
+// Count()                                              uint64                  done
+// CountAll()                                           uint64                  done
+// Clear()                                              error                   done
+// ClearAll()                                           error                   done
+// Flush()                                              error                   done
+// FlushAll()                                           error                   done
+// Subscribe(dbName, message chan string)               error                   incomplete
+// Unsubscribe()                                        error                   incomplete
+// Exists(dbName string)                                bool                    done
 //
 // Locally defined methods:
 // ****************************
-// Connect()									error					done
-// SendMessage()								( string, error )		done
-//
-// DeltaToTick(delta orderbook.Delta)			Tick			done
-// DeltaBatchToTick(deltas []*orderbook.Delta)	[]Tick			done
+// Connect()        error               done
+// SendMessage()    ( string, error )   done
 // ****************************
 
 // Pool : TODO
@@ -110,11 +118,12 @@ func (t *Tectonic) Perf() (string, error) {
 	return t.SendMessage("PERF")
 }
 
-// BulkAdd : TODO
-func (t *Tectonic) BulkAdd(ticks []*orderbook.Delta) error {
+// BulkAdd : Batch-inserts deltas stored in an array into the TectonicDB server. If you want
+// to select what data-store you want to insert the batch into, consider using the function `BulkAddInto`.
+func (t *Tectonic) BulkAdd(ticks *[]Delta) error {
 	_, _ = t.SendMessage("BULKADD")
 
-	for _, tick := range ticks {
+	for _, tick := range *ticks {
 		var (
 			isTrade = "f"
 			isBid   = "f"
@@ -134,11 +143,11 @@ func (t *Tectonic) BulkAdd(ticks []*orderbook.Delta) error {
 	return recvErr
 }
 
-// BulkAddInto : TODO
-func (t *Tectonic) BulkAddInto(dbName string, ticks []*orderbook.Delta) error {
+// BulkAddInto : Batch-inserts deltas stored in an array to the specified store
+func (t *Tectonic) BulkAddInto(dbName string, ticks *[]Delta) error {
 	_, _ = t.SendMessage("BULKADD INTO " + dbName)
 
-	for _, tick := range ticks {
+	for _, tick := range *ticks {
 		var (
 			isTrade = "f"
 			isBid   = "f"
@@ -176,11 +185,11 @@ func (t *Tectonic) Create(dbName string) error {
 }
 
 // Get : "Returns `amount` items from current store"
-func (t *Tectonic) Get(amount uint64) ([]*orderbook.Delta, error) {
+func (t *Tectonic) Get(amount uint64) (*[]Delta, error) {
 	// We use a buffer here to make it easier to maintain
 	var (
 		msgBuf  = bytes.Buffer{}
-		msgJSON = []*orderbook.Delta{}
+		msgJSON = []Delta{}
 	)
 	msgBuf.WriteString("GET ")
 	msgBuf.WriteString(strconv.Itoa(int(amount)))
@@ -189,15 +198,15 @@ func (t *Tectonic) Get(amount uint64) ([]*orderbook.Delta, error) {
 	msgRecv, recvErr := t.SendMessage(msgBuf.String())
 	ffjson.Unmarshal(bytes.Trim([]byte(msgRecv[9:]), "\x00"), &msgJSON) // We get back a message starting with `\uFFFE` - Trim that and all null chars in array
 
-	return msgJSON, recvErr
+	return &msgJSON, recvErr
 }
 
 // GetFrom : Returns items from specified store
-func (t *Tectonic) GetFrom(dbName string, amount uint64, asTick bool) ([]*orderbook.Delta, error) {
+func (t *Tectonic) GetFrom(dbName string, amount uint64, asTick bool) (*[]Delta, error) {
 	// We use a buffer here to make it easier to maintain
 	var (
 		msgBuf  = bytes.Buffer{}
-		msgJSON = []*orderbook.Delta{}
+		msgJSON = []Delta{}
 	)
 	msgBuf.WriteString("GET ")
 	msgBuf.WriteString(strconv.Itoa(int(amount)))
@@ -208,11 +217,11 @@ func (t *Tectonic) GetFrom(dbName string, amount uint64, asTick bool) ([]*orderb
 	msgRecv, recvErr := t.SendMessage(msgBuf.String())
 	ffjson.Unmarshal(bytes.Trim([]byte(msgRecv[9:]), "\x00"), &msgJSON) // We get back a message starting with `\uFFFE` - Trim that and all null chars in array
 
-	return msgJSON, recvErr
+	return &msgJSON, recvErr
 }
 
 // Insert : Inserts a single tick into the currently selected datastore
-func (t *Tectonic) Insert(tick orderbook.Delta) error {
+func (t *Tectonic) Insert(tick *Delta) error {
 	var (
 		isTrade = "f"
 		isBid   = "f"
@@ -231,7 +240,7 @@ func (t *Tectonic) Insert(tick orderbook.Delta) error {
 }
 
 // InsertInto : Inserts a single tick into the datastore specified by `dbName`
-func (t *Tectonic) InsertInto(dbName string, tick orderbook.Delta) error {
+func (t *Tectonic) InsertInto(dbName string, tick *Delta) error {
 	var (
 		isTrade = "f"
 		isBid   = "f"
@@ -285,14 +294,18 @@ func (t *Tectonic) FlushAll() (string, error) {
 	return t.SendMessage("FLUSH ALL")
 }
 
-// TODO: Make these methods functional
-//func (t *Tectonic) Subscribe(dbName, message chan string) (string, error) {
-//
-//}
-//
-//func (t *Tectonic) Unsubscribe() (string, error)    {
-//
-//}
+// TODO: Implement Subscribe/Unsubscribe. I figure it isn't used *that* much, so we
+// can implement these later.
+/* Subscribe : Listen to stream of events
+ * func (t *Tectonic) Subscribe(dbName, message chan string) (string, error) {
+ *
+ * }
+ *
+ * // Unsubscribe : Stop receiving messages from subscription
+ * func (t *Tectonic) Unsubscribe() (string, error) {
+ *
+ * }
+ */
 
 // Exists : Checks if datastore exists
 func (t *Tectonic) Exists(dbName string) bool {
